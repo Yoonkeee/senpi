@@ -539,6 +539,18 @@ export class RpcClient {
 		return this.getData<RpcUnloadAnswer>(await this.send({ ...options, type: "unload_session", sessionId }, false));
 	}
 
+	/**
+	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`).
+	 */
+	async setSessionContext(
+		patch: Record<string, string | number | boolean | null>,
+		sessionId = this.sessionId,
+	): Promise<void> {
+		if (!sessionId) throw new Error("set_session_context needs a session");
+		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
+	}
+
 	async closeSession(sessionId = this.sessionId): Promise<void> {
 		if (!sessionId) return;
 		try {
@@ -1167,6 +1179,13 @@ export class RpcClient {
 	 */
 	async setSessionName(name: string): Promise<void> {
 		await this.send({ type: "set_session_name", name });
+	}
+
+	/**
+	 * Report that the user started typing a draft, so a first-activity prompt-cache prewarm can run (senpi#3859).
+	 */
+	async recordDraftActivity(): Promise<void> {
+		await this.send({ type: "record_user_activity", kind: "draft" });
 	}
 
 	async importJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {

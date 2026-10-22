@@ -1,3 +1,48 @@
+## 2026-10-22 - A damaged seat-digest salt is replaced (oh-my-openagent#10304 follow-up)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a salt file that is not exactly 32 bytes is removed (only if it is still the file that was read, by inode) and recreated through the same link-into-place path, instead of being ignored in favour of a process-only salt. On a filesystem without hard links (`linkSync` fails with EPERM, ENOTSUP or ENOSYS) the salt is created directly with an exclusive write, so restarts there keep matching too.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: a truncated salt left on disk sent every later process to the process-only fallback forever, so seat digests never matched across restarts on that install (review LOW 2 on senpi#3947); and an agent dir on a filesystem without hard links never stored a salt at all (the senpi#3947 delta review's LOW).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: the salt is private state of this extension.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/core/extensions/builtin/anthropic-subscription/seat-digest.ts`: `readOrCreateSalt` and the new `removeDamagedSalt`.
+
+## 2026-10-22 - A same-turn retry on another seat is reported as a seat switch, and every continuity decision names its seat (oh-my-openagent#10304)
+
+### What changed
+
+- `session-continuity.ts`: `decideFromBinding` keeps the retry checkpoint's decision (the same fork boundary and offset, senpi#1973 and senpi#1974) but labels it `account_changed` when the attempt runs on a different account than the binding. A same-seat retry keeps `timeout_retry`.
+- `session-observability.ts`: `ContinuityObservation` gains `seat` (the first 8 hex digits of an HMAC-SHA-256 of the account slot name keyed by a per-install salt, never the name) and `seatChanged` (the attempt runs on another account than the lineage's last one). Both reach the `claude_sdk_oauth_session_continuity` session.log line and the continuity diagnostic.
+- `seat-digest.ts` (new): `seatDigest` keys the digest with 32 random bytes created once under the agent dir (`anthropic-subscription/seat-digest-salt`, mode 0600), written whole to a private file and hard-linked into place, so the final name never exists half-written and processes racing on the first use converge on the first salt linked (EEXIST re-reads it), so the same slot name digests differently on two installs and a guessed name (`env`, an email address) cannot be confirmed without the salt. Only decision observations carry a seat; the terminal `failed` observation and the non-resident `disabled` one do not.
+- `session-stream.ts`: `createResidentAttempt` computes both from the live entry, the in-memory binding or the restored binding, in that order.
+- Tests: `test/anthropic-subscription-seat-digest.test.ts` pins the per-install salt; `test/anthropic-subscription-continuity-retry-checkpoint.test.ts` pins both labels at the same boundary; `test/suite/regressions/1432-anthropic-subscription-failover-reattach.test.ts` and `723-anthropic-subscription-timeout-abort-retry-continuity.test.ts` pin `seatChanged: true` on a failover and `false` on a same-seat retry, and that no slot name reaches the observation.
+
+- Supersedes the label in two older entries of this file: the senpi#1432 entry ("same-turn failover forks at the pre-turn boundary with reason `timeout_retry`") and the #723 retry-checkpoint entry. A checkpoint fork on another account is now `account_changed`; the older entries stay as dated history.
+
+### Why
+
+Prompt caches never cross Anthropic organizations, and each subscription seat is its own organization, so the first request on a new seat writes the whole prefix. A same-turn retry that failed over to another seat was labelled `fork / timeout_retry`, the label of a same-seat retry that reads its cache. In the reported incident every such record read only the 29,319-token system and tool prefix and wrote 0.8-0.9M tokens, and nothing in the logs could tell a seat switch from a same-seat retry or say which seat served it.
+
+### Why an extension could not handle it
+
+The continuity decision and its observation are internal to this builtin.
+
+### Expected merge conflict zones
+
+- `session-continuity.ts`: the `retryCheckpointDecision` call in `decideFromBinding`;
+- `session-observability.ts`: `ContinuityObservation` and `emitContinuityObservation`;
+- `session-stream.ts`: the imports, the top of `createResidentAttempt` and the `stageContinuityDecision` call;
+- `seat-digest.ts` is new.
+
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 
 ### What changed

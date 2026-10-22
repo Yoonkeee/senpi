@@ -107,6 +107,12 @@ export class PiMessagesResponseError extends Error {
 	}
 }
 
+/** `promptCacheBreakpoint` is a request-local hint for adapters that place cache breakpoints; it is not part of the pi-messages wire. */
+function withoutPromptCacheBreakpoint(message: AssistantMessage): AssistantMessage {
+	const { promptCacheBreakpoint: _hint, ...rest } = message;
+	return rest;
+}
+
 function parsePiMessagesErrorBody(body: string): PiMessagesErrorBody | undefined {
 	try {
 		const parsed = JSON.parse(body) as PiMessagesErrorBody | null;
@@ -392,7 +398,9 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 											: part,
 									),
 								}
-							: message,
+							: message.role === "assistant" && message.promptCacheBreakpoint
+								? withoutPromptCacheBreakpoint(message)
+								: message,
 					),
 				},
 				options: {

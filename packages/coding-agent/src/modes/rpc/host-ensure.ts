@@ -19,7 +19,7 @@ import {
 import { claimHostOwner } from "./host-daemon-state.ts";
 import { decideHostAction, type HostDecision, HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
 import { ensureClient } from "./host-ensure-client.ts";
-import { publicEndpointAccepts, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
+import { refuseIfForeignHeld, refuseIfStalled, unregisteredEndpointHeld } from "./host-ensure-liveness.ts";
 import { hostEnsureLockOptions, hostEnsureLockTarget } from "./host-ensure-lock.ts";
 import { appendStderr, DEFAULT_READINESS_TIMEOUT_MS, DEFAULT_STOP_TIMEOUT_MS, startHost } from "./host-ensure-start.ts";
 import {
@@ -191,7 +191,7 @@ async function ensureHostLocked(
 		if (!startedByUs) {
 			// I1: the socket is silent, but the process behind it is alive. Only the process that WROTE
 			// this record may end it - anyone else refuses rather than signalling somebody else's host.
-			if (await publicEndpointAccepts(socket)) throw new HostEnsureRefusedError(socket, "foreign_writer", protocol);
+			await refuseIfForeignHeld(paths, registered, socket, protocol);
 			await refuseIfStalled(paths, registered.instanceId, socket, protocol);
 			// A foreign record whose public endpoint accepts NOTHING names a generation nobody can reach:
 			// its entry was replaced (so it is already draining, #1893) or removed, or a dead listener

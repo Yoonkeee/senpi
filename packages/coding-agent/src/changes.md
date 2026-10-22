@@ -1,3 +1,22 @@
+## 2026-10-20 - The host holder type is exported (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/index.ts`: exports `describeHostHolder` and `type HostHolder` from `./rpc/host-holder.ts`.
+- `packages/coding-agent/src/index.ts`: re-exports `type HostHolder` next to `HostEnsureRefusedError`.
+
+### Why
+
+- `HostEnsureRefusedError.holder` is part of the public refusal; embedders (the omo runner, the desktop) read it with the same type.
+
+### Why an extension could not handle it
+
+- These are the package's public barrels.
+
+### Expected merge conflict zones
+
+- LOW: one export line in each barrel's host block.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed

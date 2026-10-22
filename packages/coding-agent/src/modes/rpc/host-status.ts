@@ -13,6 +13,7 @@
 import { isHostCrash, readHostCrashRecords } from "./host-crash-record.ts";
 import { readDaemonEnvKeys } from "./host-daemon-env.ts";
 import { createHostDaemonPaths, parseShardSocket, type ShardKind } from "./host-daemon-paths.ts";
+import { readHostRegistration } from "./host-daemon-registration.ts";
 import type { HostProtocolInfo } from "./host-decision.ts";
 import { type HostGenerationRow, pruneDeadGenerations, readGenerationRows } from "./host-generations.ts";
 import { OBSERVE_REQUEST_FIELD } from "./host-observe-request.ts";
@@ -46,6 +47,7 @@ export interface HostStatusReport {
 	readonly lifecycle: "ready" | "stopping" | null;
 	readonly socket: string;
 	readonly pid: number | null;
+	readonly processStartTime: string | null;
 	readonly instanceId: string | null;
 	readonly generation: number | null;
 	readonly engineVersion: string | null;
@@ -135,6 +137,7 @@ export async function probeHostStatus(
 	if (prune) await pruneDeadGenerations(paths);
 	const generations = await readGenerationRows(paths, { includeDead: !prune });
 	const current = generations.find((row) => row.current && row.alive);
+	const registered = await readHostRegistration(paths);
 	const metrics = current ? await readHostProcessMetrics(current.pid) : UNOBSERVED_METRICS;
 	// A socket that did not answer who it is will not answer what it holds: asking again would only
 	// spend a second budget on a hung endpoint.
@@ -148,6 +151,10 @@ export async function probeHostStatus(
 		lifecycle: host?.lifecycle ?? null,
 		socket: options.socket,
 		pid: current?.pid ?? null,
+		processStartTime:
+			registered?.instanceId === current?.instanceId && registered?.record.pid === current?.pid
+				? (registered?.record.processStartTime ?? null)
+				: null,
 		instanceId: host?.instanceId ?? current?.instanceId ?? null,
 		generation: host?.generation ?? current?.generation ?? null,
 		engineVersion: host?.engineVersion ?? current?.engineVersion ?? null,

@@ -50,6 +50,8 @@ export interface ManifestMonitor {
 	readonly filter?: string;
 	/** Command watch whose output lines are a person's words; absent on older entries. */
 	readonly humanInput?: boolean;
+	/** Per-monitor wake-rate override of a persistent command watch; absent uses the setting. */
+	readonly wakesPerHour?: number;
 	readonly cwd?: string;
 	readonly approvedParent?: string;
 	/** Rpc watches: the target as written, the record kinds reported and dropped. */
@@ -92,6 +94,7 @@ export interface CommandMonitorSpec {
 	readonly command: string;
 	readonly filter?: string;
 	readonly humanInput?: boolean;
+	readonly wakesPerHour?: number;
 	readonly cwd?: string;
 	readonly persistent: boolean;
 }

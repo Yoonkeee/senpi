@@ -94,7 +94,9 @@ async function createMonitor(
 		persistent: input.persistent === true,
 		deadlineMs,
 		...(input.human_input === true ? { humanInput: true } : {}),
-		// Only persistent command watches are restartable-command durable: those carry the fire budget.
+		...(input.wakes_per_hour !== undefined ? { wakesPerHour: input.wakes_per_hour } : {}),
+		// Only persistent command watches are restartable-command durable: those carry the fire window
+		// and the runaway guard, and only they are wake-paced.
 		durabilityClass: input.persistent === true ? "restartable-command" : "ephemeral",
 		// Same deadline the manifest writer persists, so the footer warns off the live record too.
 		...(input.persistent === true ? { expiresAt: Date.now() + DURABLE_MONITOR_EXPIRY_MS } : {}),
@@ -111,6 +113,7 @@ async function createMonitor(
 			command: input.command,
 			filter: input.filter,
 			...(input.human_input === true ? { humanInput: true } : {}),
+			...(input.wakes_per_hour !== undefined ? { wakesPerHour: input.wakes_per_hour } : {}),
 			cwd,
 			persistent: input.persistent === true,
 		},
@@ -182,6 +185,15 @@ export function createMonitorTool(ctx: TerminalToolContext) {
 			}
 			const source = monitorSourceOf(input);
 			if (typeof source !== "string") return errorResult(source.error);
+			if (input.wakes_per_hour !== undefined && (source !== "command" || input.persistent !== true))
+				return errorResult(
+					"wakes_per_hour applies to persistent command monitors (command with persistent: true); other watches are not wake-paced.",
+				);
+			if (
+				input.wakes_per_hour !== undefined &&
+				(!Number.isInteger(input.wakes_per_hour) || input.wakes_per_hour < 1 || input.wakes_per_hour > 3600)
+			)
+				return errorResult("wakes_per_hour must be an integer from 1 to 3600.");
 			if (source === "rpc") {
 				if (input.human_input === true)
 					return errorResult(

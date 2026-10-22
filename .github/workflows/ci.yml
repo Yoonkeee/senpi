@@ -6,19 +6,65 @@ on:
   # Every pull request runs CI, whatever its base: a PR stacked on another feature branch must not reach main untested
   # (senpi#2759).
   pull_request:
+  # ci-full-label.yml calls this workflow when a PR gets the run-full-ci label (senpi#3957).
+  workflow_call:
 
 # A pull request has one run group (its ref is refs/pull/<n>/merge): a push or restack cancels the run it
 # supersedes. A main push gets its own group per commit, so its run never waits behind another main run and is
 # never cancelled or replaced by a later merge: every main commit ends with its own "Check and test" result, which
-# the release reuses as its test evidence (senpi#2960).
+# the release reuses as its test evidence (senpi#2960). After the fixed per-file prefix comes the workflow name, which is
+# the caller's when ci-full-label.yml calls this workflow, so a label-forced full run never cancels the PR's own run, and
+# the label run's other called workflows (their own prefixes) never cancel this one (senpi#3957).
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   SENPI_TEST_TEMP_GUARD: "1"
 
 jobs:
+  # Hosted macOS and Windows runners are scarce, so a pull request runs the jobs that need one only when its diff
+  # touches platform-specific paths (scripts/ci-platform-scope.mjs, senpi#3957). A push to main and the run-full-ci
+  # label (ci-full-label.yml) always run the full set.
+  platform-scope:
+    name: Platform scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      full: ${{ steps.classify.outputs.full }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            scripts/ci-platform-scope.mjs
+            .github/workflows/ci.yml
+          sparse-checkout-cone-mode: false
+
+      - name: List the pull request's changed files
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)' > "$RUNNER_TEMP/changed-files"; then
+            echo "CHANGED_FILES=$RUNNER_TEMP/changed-files" >> "$GITHUB_ENV"
+          else
+            echo "::warning::could not list the changed files; running the full macOS/Windows set"
+          fi
+
+      - name: Classify
+        id: classify
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node scripts/ci-platform-scope.mjs classify --event "$EVENT_NAME" --labels "$PR_LABELS" --changed "${CHANGED_FILES:-}" --workflow .github/workflows/ci.yml
+
   codemode-gate:
     name: codemode-gate
     runs-on: ubuntu-latest
@@ -287,6 +333,8 @@ jobs:
 
   hooks-trust-storage-windows:
     name: Hooks trust storage (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -320,6 +368,8 @@ jobs:
   # names Windows Terminal's Shift selection bypass. Run the wheel-yield and hint tests on Windows.
   tui-mouse-windows:
     name: TUI mouse wheel and hint (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -359,6 +409,8 @@ jobs:
   # bun:ffi, so vitest runs under Bun here; under Node they skip themselves, which the last step refuses.
   tool-child-windows:
     name: Tool child Job Object (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -428,6 +480,8 @@ jobs:
         run: node scripts/test-temp-guard.mjs check local-ignore/test-temp-before.json
   schedule-windows:
     name: Scheduled prompts (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -463,6 +517,8 @@ jobs:
 
   rpc-windows:
     name: RPC named pipes (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -553,6 +609,8 @@ jobs:
 
   compiled-extensions-windows:
     name: Compiled extensions (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -620,6 +678,8 @@ jobs:
   # runtime); the JSON check fails the job if that file was skipped instead of executed.
   claude-executable-windows:
     name: Claude Code executable (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -680,6 +740,8 @@ jobs:
   # can measure it; the JSON check fails the job if the suite was skipped instead of run.
   bash-grandchild-console-windows:
     name: Bash grandchild consoles (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -737,10 +799,12 @@ jobs:
   # on hosted runners) and are skipped elsewhere; the JSON check fails the job if they were skipped.
   webview-kernel:
     name: Eval kernel WebView (${{ matrix.os }})
+    needs: platform-scope
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows only for a full run (senpi#3957); Linux always.
+        os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -902,6 +966,8 @@ jobs:
 
   python-kernel-windows:
     name: Python kernel cold startup (Windows)
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -1022,6 +1088,28 @@ jobs:
           node scripts/run-tests.mjs bun test scripts/bun-bundle-provider-coverage.test.ts
           node scripts/run-tests.mjs bun test scripts/compiled-provider-probe.test.ts
 
+      # The native grep probe tests load the senpi-grep addon. Build it once here, with the Rust
+      # cache, and hand its path to both script-test steps; the test refuses to build it inside a
+      # hook in CI (#3978).
+      - name: Setup Rust
+        run: |
+          toolchain=stable
+          if [ -f rust-toolchain.toml ]; then
+            toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          fi
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup default "$toolchain"
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Build native grep addon
+        working-directory: crates/senpi-grep
+        run: |
+          npm exec --yes --package @napi-rs/cli@3.7.2 -- napi build --platform --release -- --locked
+          node_file=$(ls senpi_grep.*.node)
+          echo "SENPI_GREP_NATIVE_PATH=$PWD/$node_file" >> "$GITHUB_ENV"
+
       - name: Script tests
         run: npm run test:scripts
 
@@ -1111,6 +1199,7 @@ jobs:
     name: Check and test
     needs:
       [
+        platform-scope,
         check,
         codemode-gate,
         test-coding-agent,
@@ -1133,17 +1222,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - name: Checkout the gate verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci-platform-scope.mjs
+          sparse-checkout-cone-mode: false
+
+      # Every job must succeed; a macOS/Windows-only job may be skipped only when platform-scope decided this run
+      # is not full (senpi#3957). A failed or missing scope decision allows no skips.
       - name: Verify all gates
         shell: bash
-        run: |
-          results='${{ join(needs.*.result, ' ') }}'
-          echo "gate results: $results"
-          for r in $results; do
-            if [ "$r" != "success" ]; then
-              echo "::error::a required CI job finished with result '$r'"
-              exit 1
-            fi
-          done
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci-platform-scope.mjs verify --full "${{ needs.platform-scope.outputs.full }}"
 
       - name: Workflow summary
         if: always()
@@ -1151,6 +1242,7 @@ jobs:
         run: |
           {
             echo "## Check and test (fan-in)"
+            echo "- platform-scope: ${{ needs.platform-scope.result }} (full=${{ needs.platform-scope.outputs.full }})"
             echo "- check: ${{ needs.check.result }}"
             echo "- codemode-gate: ${{ needs.codemode-gate.result }}"
             echo "- test-coding-agent: ${{ needs.test-coding-agent.result }}"
@@ -1172,11 +1264,14 @@ jobs:
   # WebView runs last: its SIGSTOP/SIGKILL Chrome tests can wedge hosted macOS runners (#2290).
   macos-combined:
     name: macOS combined
+    needs: platform-scope
+    if: needs.platform-scope.outputs.full == 'true'
     runs-on: macos-latest
-    # Former job budgets: 20 + 20 + 15 + 30 + 20 minutes, plus 15 for shared setup.
-    # Each part keeps its old job cap as step timeouts (the terminal part's two steps share its 30),
-    # so one hung part fails only itself; the job cap is the sum of part caps plus setup margin.
-    timeout-minutes: 115
+    # Each suite step keeps the cap it had on its old leg: its own step timeout where it had one
+    # (process and WebView: 12), else its old job cap (the terminal part's two steps share its 30).
+    # The job cap is the sum of those step caps plus 10 minutes of shared setup, so one hung suite
+    # holds the macOS runner only for its own budget and the later suites still run.
+    timeout-minutes: 99
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1219,7 +1314,7 @@ jobs:
       - name: Run the process-mode kernel suite
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.process_test_temp_snapshot.outcome == 'success' }}
         id: process
-        timeout-minutes: 20
+        timeout-minutes: 12
         run: node ../../scripts/run-tests.mjs vitest run test/js-process-kernel.test.ts --reporter=verbose --reporter=json --outputFile=vitest-process.json
         working-directory: packages/senpi-codemode
 
@@ -1287,7 +1382,6 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs check local-ignore/rpc-test-temp-before.json
 
-
       - name: Snapshot OS temp before tests
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         id: terminal_test_temp_snapshot
@@ -1351,7 +1445,7 @@ jobs:
       - name: Run eval kernel WebView suites (Bun)
         if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.webview_test_temp_snapshot.outcome == 'success' }}
         id: webview
-        timeout-minutes: 20
+        timeout-minutes: 12
         shell: bash
         env:
           SENPI_WEBVIEW_READINESS_LOG: ${{ runner.temp }}/webview-readiness.log
@@ -1382,7 +1476,7 @@ jobs:
         run: cat "$RUNNER_TEMP/webview-readiness.log" 2>/dev/null || echo "no readiness log"
 
       - name: Require the WebView suites to have executed
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.webview_test_temp_snapshot.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.webview.outcome == 'success' }}
         shell: bash
         run: |
           node -e '
@@ -1402,13 +1496,14 @@ jobs:
         shell: bash
         run: node scripts/test-temp-guard.mjs check local-ignore/webview-test-temp-before.json
 
-
   terminal-cross-os:
     name: Terminal tools (${{ matrix.os }})
+    needs: platform-scope
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows only for a full run (senpi#3957); Linux always.
+        os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -1448,10 +1543,12 @@ jobs:
 
   inspector-handoff:
     name: Inspector handoff (${{ matrix.os }})
+    needs: platform-scope
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows only for a full run (senpi#3957); Linux always.
+        os: ${{ fromJSON(needs.platform-scope.outputs.full == 'true' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:

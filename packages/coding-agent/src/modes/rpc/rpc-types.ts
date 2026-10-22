@@ -266,6 +266,8 @@ type RpcSessionCommand =
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
 	| { id?: string; type: "set_session_name"; name: string }
+	/** The user started typing a draft in this session's composer (senpi#3859). Only `draft` is accepted. */
+	| { id?: string; type: "record_user_activity"; kind: "draft" }
 	| { id?: string; type: "import_jsonl"; inputPath: string; cwdOverride?: string }
 
 	// Messages
@@ -467,6 +469,9 @@ export interface RpcAbortQuiesce {
 
 /** Capability: `steer`/`follow_up` accept `whenIdle: "start"`. */
 export const STEER_WHEN_IDLE_CAPABILITY = "steer_when_idle";
+
+/** Capability: `record_user_activity` reports composer draft activity (senpi#3859). */
+export const USER_ACTIVITY_CAPABILITY = "user_activity";
 
 /** What `steer`/`follow_up` do on an idle session: queue (default) or start a turn. */
 export type RpcWhenIdle = "queue" | "start";
@@ -1266,6 +1271,7 @@ export type RpcResponse =
 			data: { text: string | null };
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
+	| { id?: string; type: "response"; command: "record_user_activity"; success: true }
 	| { id?: string; type: "response"; command: "import_jsonl"; success: true; data: { cancelled: boolean } }
 
 	// Messages

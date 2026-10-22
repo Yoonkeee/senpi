@@ -323,7 +323,14 @@ describe("Claude SDK OAuth continuity observations", () => {
 		expect(sink.logged).toEqual([
 			{
 				event: "claude_sdk_oauth_session_continuity",
-				data: { kind: "bootstrap", reason: "registry_miss", count: 1, sessionId },
+				data: {
+					kind: "bootstrap",
+					reason: "registry_miss",
+					count: 1,
+					// The serving seat as a digest; a first turn has no earlier seat to compare (oh-my-openagent#10304).
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					sessionId,
+				},
 			},
 		]);
 	});

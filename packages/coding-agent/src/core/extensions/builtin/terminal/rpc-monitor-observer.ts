@@ -6,6 +6,7 @@
  * reads the stream itself.
  */
 import { createConnection, type Socket } from "node:net";
+import { OBSERVE_REQUEST_FIELD } from "../../../../modes/rpc/host-observe-request.ts";
 import { attachJsonlLineReader, MAX_RPC_LINE_CHARACTERS } from "../../../../modes/rpc/jsonl.ts";
 import {
 	readSocketSecret,
@@ -49,7 +50,10 @@ export async function openRpcObserver(
 	};
 	socket.once("connect", () => {
 		if (secret !== undefined) sendSocketHandshake(socket, secret);
-		socket.write(`${JSON.stringify({ ...subscription, id: SUBSCRIBE_ID, type: "subscribe_sessions" })}\n`);
+		// Marked observing (senpi#3956): without it the supervisor counts this watch as an attached client, so a
+		// watched host never idle-exits and a `children`/`all` watch pins every task shard host on the machine.
+		const frame = { ...subscription, [OBSERVE_REQUEST_FIELD]: true, id: SUBSCRIBE_ID, type: "subscribe_sessions" };
+		socket.write(`${JSON.stringify(frame)}\n`);
 	});
 	const detach = attachJsonlLineReader(
 		socket,

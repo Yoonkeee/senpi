@@ -774,6 +774,14 @@ export interface AssistantMessage {
 	 * Preserved for debugging and does not currently affect agent control flow.
 	 */
 	endTurn?: boolean;
+	/**
+	 * Request-only hint, never persisted: the history up to and including this message is a stable
+	 * prefix, so adapters with explicit prompt-cache breakpoints mark it. Context reduction sets it on
+	 * the last message its frontier leaves unchanged, so the next frontier step reads that prefix
+	 * instead of re-writing it (senpi#3242).
+	 */
+	promptCacheBreakpoint?: true;
+
 	/** Response timing stamped by the agent loop. Absent on older messages and on messages built outside the loop. */
 	timing?: AssistantMessageTiming;
 	timestamp: number; // Unix timestamp in milliseconds

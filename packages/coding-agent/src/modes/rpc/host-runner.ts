@@ -45,7 +45,8 @@ import {
 import { probeProtocolInfo } from "./host-probe.ts";
 import { readHostStatus, readSessionCounts } from "./host-status.ts";
 import { readAllHostStatus } from "./host-status-all.ts";
-import { stopHost } from "./host-stop.ts";
+import { staleStopGeneration, stopHost } from "./host-stop.ts";
+import type { HostStopGeneration } from "./host-stop-generation.ts";
 
 export {
 	HOST_EXIT_ERROR,
@@ -83,6 +84,7 @@ export type HostRequest =
 			readonly target: HostTarget;
 			readonly drain: boolean;
 			readonly force: boolean;
+			readonly expectedGeneration?: HostStopGeneration;
 			/** With `drain`: the generation to drain, by instance id (senpi#3653). */
 			readonly instanceId?: string;
 			/** With `drain`: wait up to this long for that generation to exit. */
@@ -161,6 +163,7 @@ async function ensureOutcome(
 			reason: error.reason,
 			socket: target.socket,
 			...(error.detail !== undefined && { detail: error.detail }),
+			...(error.holder !== undefined && { holder: error.holder }),
 		});
 	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS).finally(ensured.release);
@@ -215,6 +218,10 @@ function shardPathOutcome(kind: ShardKind, owner: string, root: string): HostOut
  */
 async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): Promise<HostOutcome> {
 	const { target, drain, force, instanceId, waitMs } = request;
+	if (request.expectedGeneration !== undefined) {
+		const stale = await staleStopGeneration(target.socket, target.agentDir, request.expectedGeneration);
+		if (stale !== undefined) return refusal("refuse", undefined, { reason: stale.reason, socket: target.socket });
+	}
 	const host = await probeProtocolInfo(target.socket, PROBE_TIMEOUT_MS);
 	const sessions = await readSessionCounts(target.socket, true);
 	const occupied = sessions.foreign_attached + sessions.foreign_retained > 0;
@@ -226,6 +233,7 @@ async function stopOutcome(request: Extract<HostRequest, { action: "stop" }>): P
 		agentDir: target.agentDir,
 		drain,
 		force,
+		...(request.expectedGeneration !== undefined && { expectedGeneration: request.expectedGeneration }),
 		...(instanceId !== undefined && { instanceId }),
 		...(waitMs !== undefined && { waitMs }),
 	});

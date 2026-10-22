@@ -4,7 +4,10 @@
  * out of `host-ensure.ts`; neither check ever signals anything.
  */
 import { generationPaths, type HostDaemonPaths } from "./host-daemon-paths.ts";
+import type { RegisteredHost } from "./host-daemon-registration.ts";
+import { parseJson, readFileOrUndefined } from "./host-daemon-state.ts";
 import { HostEnsureRefusedError, type HostProtocolInfo } from "./host-decision.ts";
+import type { HostHolder } from "./host-holder.ts";
 import { probeSocketReachable } from "./host-probe.ts";
 import { hostChildAlive, hostLoopStalled, stallRefusalWindowMs } from "./host-stalled-evidence.ts";
 import { loopLagErrorMs } from "./loop-lag-threshold.ts";
@@ -29,6 +32,37 @@ export async function refuseIfStalled(
 	if (stalled && (await hostChildAlive(generation)) !== false) {
 		throw new HostEnsureRefusedError(socket, "host_stalled", protocol);
 	}
+}
+
+/**
+ * I1 for a record another process wrote: while something still accepts at the public path, the generation
+ * it names may own the endpoint, so the ensure refuses `foreign_writer` - and the refusal names that
+ * generation, so every client can say WHO is in the way instead of only that something is
+ * (omo-desktop-app#3561). An endpoint nothing accepts at is left to the caller's stranded start (#1936).
+ */
+export async function refuseIfForeignHeld(
+	paths: HostDaemonPaths,
+	registered: RegisteredHost,
+	socket: string,
+	protocol: HostProtocolInfo | undefined,
+): Promise<void> {
+	if (!(await publicEndpointAccepts(socket))) return;
+	const holder = await readHostHolder(paths, registered);
+	throw new HostEnsureRefusedError(socket, "foreign_writer", protocol, undefined, holder);
+}
+
+/** The registration's own account of the generation: its record also stores the build and launch profile. */
+export async function readHostHolder(paths: HostDaemonPaths, registered: RegisteredHost): Promise<HostHolder> {
+	const record = parseJson(await readFileOrUndefined(generationPaths(paths, registered.instanceId).pidFile)) ?? {};
+	return {
+		pid: registered.record.pid,
+		instanceId: registered.instanceId,
+		generation: registered.generation,
+		processStartTime: registered.record.processStartTime,
+		engineVersion: typeof record.engineVersion === "string" ? record.engineVersion : null,
+		launchProfileId: typeof record.launchProfileId === "string" ? record.launchProfileId : null,
+		writerPid: registered.writer?.pid ?? null,
+	};
 }
 
 /**

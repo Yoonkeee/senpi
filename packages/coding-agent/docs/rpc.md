@@ -933,13 +933,23 @@ daemon the same way instead of each re-implementing the decision:
 ```
 senpi host ensure     [--json] [--launch-spec <file>] [--policy upgrade|fallback|never] [--socket <path>]
 senpi host status     [--json] [--include-workers] [--all] [--socket <path>]
-senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force] [--socket <path>]
+senpi host stop       [--json] [--drain [--instance <id>] [--wait-ms <n>]] [--force]
+                      [--expected-generation <json>] [--socket <path>]
 senpi host handoff    [--json] [--launch-spec <file>] [--socket <path>]
                       [--when idle --operation <id> --if-instance <id> --if-generation <n> --target-build <id>]
 senpi host shard-path --kind <p|i> --owner <id> [--root <dir>] [--json]
 senpi host gc         [--json] [--agent-dir <dir>]
 senpi host session <open|close|model|prompt|steer|abort|read|state|list|wait> ...   (see "Driving sessions from the CLI")
 ```
+
+`host stop --force --expected-generation '{"instanceId":…,"generation":…,"pid":…,"processStartTime":…}'` stops only the
+generation the operator confirmed (the identity `host status` reports). It takes the endpoint lock and refuses
+`stale_generation` without signalling when another generation holds the endpoint, and `unknown_owner` when the process
+cannot be proven. `processStartTime` is `null` on platforms that record none (Windows); there a registration and
+confirmation that are both null bind pid, instance id and generation, and the stop proves the same process before
+signalling: its live start time (read with a 10 s budget) must be no later than the registration was written, so a
+reused pid is refused `unknown_owner`, and an answering host must report the confirmed instance id. It cannot be
+combined with `--drain`.
 
 The contract is machine-first: EXACTLY ONE JSON line on stdout and nothing else, diagnostics on stderr,
 and an exit code that classifies the outcome without parsing the line.
@@ -1401,6 +1411,8 @@ Ends a subscription held by the same connection; a closed connection ends its su
 ```
 
 An attached connection patches the context a session publishes (on `list_sessions { include_workers: true }` and on `session_status` for subscribers with `include_context`). Keys match `^[a-z][a-z0-9_]{0,63}$`; values are strings of at most 256 characters, numbers, booleans, or `null` to delete; the patched context is at most 4096 bytes of JSON. The host's own keys (`host_socket`, `host_instance`, `shard_key`, `tree_key`) and the lineage keys (`parent_session_id`, `root_session_id`) are refused with `invalid_session_context` and `errorData { reason, action }`. The session's extensions keep reading the context the session was opened with, and a `childrenOf` subscription matches on that frozen open-time context, so no patch moves a session into or out of a supervisor's children view. The response carries the published `context`; subscribers with `include_context` receive a `session_status` with cause `context`.
+
+The SDK sends it with `RpcClient.setSessionContext(patch, sessionId?)`, which defaults to the attached session and rejects with an `RpcCommandError` carrying the code.
 
 A connection without an attachment receives `errorCode: "session_not_attached"` with `errorData.reason: "this connection is not attached to that session"` and `errorData.action: "attach first with open_session { sessionPath }, then patch its context"`.
 
@@ -3912,6 +3924,23 @@ Response:
 ```
 
 The current session name is available via `get_state` in the `sessionName` field. To set the initial name when starting RPC mode, pass `--name <name>` or `-n <name>` to the `senpi --mode rpc` process.
+
+#### record_user_activity
+
+Reports that the user started typing a draft in this session's composer (capability `user_activity`). It feeds the same first-activity signal the interactive editor sends, so a session with prompt-cache keep-alive enabled and an eligible model warms the first turn's prefix once while the user is still typing. Repeated reports are no-ops after the first, and nothing is sent to a provider when keep-alive is disabled or the model is ineligible. Only `kind: "draft"` is accepted: prompt activity is recorded by the prompt itself, and any other kind is refused with `invalid_argument`. On a multi-session host the command is session-scoped and passes the session-writer guard, so a session held by another writer answers `session_held`.
+
+```json
+{"type": "record_user_activity", "sessionId": "rpc-1", "kind": "draft"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "record_user_activity",
+  "success": true
+}
+```
 
 #### wake
 

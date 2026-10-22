@@ -231,8 +231,10 @@ describe("issue #1432 claude-sdk-oauth two-account failover reattach", () => {
 	it("fork-resumes the bound lineage on the failover account instead of flattening", async () => {
 		await configureTwoAccountPool();
 		const observations: ContinuityObservation[] = [];
+		const logged: Array<{ event: string; data: Record<string, unknown> }> = [];
 		overrideContinuityObservabilityBoundary({
 			emit: (observation) => observations.push(observation),
+			log: (event, data) => logged.push({ event, data }),
 		});
 		const queries = residentBoundary((account, submission) =>
 			account === ACCOUNT_PRIMARY && submission === 2 ? "rate-limit" : "success",
@@ -272,8 +274,28 @@ describe("issue #1432 claude-sdk-oauth two-account failover reattach", () => {
 				(observation) => observation.kind === "flatten" && observation.reason === "account_changed",
 			),
 		).toEqual([]);
+		// The fork is labelled as the seat switch it is (oh-my-openagent#10304): prompt caches
+		// never cross accounts, so the new seat writes the prefix instead of reading it.
 		expect(
-			observations.some((observation) => observation.kind === "fork" && observation.reason === "timeout_retry"),
+			observations.some((observation) => observation.kind === "fork" && observation.reason === "account_changed"),
 		).toBe(true);
+		expect(observations.some((observation) => observation.reason === "timeout_retry")).toBe(false);
+		// The seat switch is attributable without naming the account: a digest, flagged as changed.
+		const switched = observations.find((observation) => observation.reason === "account_changed");
+		expect(switched).toMatchObject({ seat: expect.stringMatching(/^[0-9a-f]{8}$/), seatChanged: true });
+		// Seat attribution is an opaque digest: no slot name, access token or refresh token
+		// reaches an observation or a session.log line (oh-my-openagent#10304).
+		const surfaced = JSON.stringify({ observations, logged });
+		expect(logged.some((line) => line.data.seatChanged === true)).toBe(true);
+		for (const secret of [
+			ACCOUNT_PRIMARY,
+			ACCOUNT_SECONDARY,
+			ACCESS_PRIMARY,
+			"access-secondary",
+			"r-primary",
+			"r-secondary",
+		]) {
+			expect(surfaced).not.toContain(secret);
+		}
 	}, 10_000);
 });

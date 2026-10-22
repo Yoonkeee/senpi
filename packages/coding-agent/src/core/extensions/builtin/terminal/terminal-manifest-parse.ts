@@ -60,6 +60,13 @@ function opt<T>(raw: Raw, field: string, required: (raw: Raw, field: string) => 
 	return raw[field] === undefined ? undefined : required(raw, field);
 }
 
+function wakeRate(raw: Raw, field: string): number {
+	const value = raw[field];
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 3600)
+		invalid(`field ${field} must be an integer from 1 to 3600`);
+	return value;
+}
+
 function oneOf<T extends string>(values: readonly T[], raw: Raw, field: string): T {
 	const value = raw[field];
 	if (typeof value !== "string" || !values.includes(value as T))
@@ -139,6 +146,7 @@ function parseMonitor(entry: unknown): ManifestMonitor {
 		event: opt(entry, "event", (raw, field) => oneOf(FILE_EVENTS, raw, field)),
 		filter: opt(entry, "filter", str),
 		humanInput: opt(entry, "humanInput", bool),
+		...(entry.wakesPerHour === undefined ? {} : { wakesPerHour: wakeRate(entry, "wakesPerHour") }),
 		cwd: opt(entry, "cwd", str),
 		approvedParent: opt(entry, "approvedParent", str),
 		target: opt(entry, "target", str),

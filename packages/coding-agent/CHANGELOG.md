@@ -6,6 +6,29 @@
 
 ### Added
 
+- `RpcClient.setSessionContext(patch, sessionId?)` publishes session context (`set_session_context`) from an attached client, so a task runner can record a terminal `task_status` before it detaches ([#3905](https://github.com/code-yeongyu/senpi/issues/3905)).
+
+### Changed
+
+### Fixed
+
+- Anthropic Subscription: a damaged seat-digest salt file is now replaced instead of being ignored, and the salt is now stored on filesystems without hard links, so seat digests keep matching across restarts ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
+
+- Context reduction on 1M windows no longer re-writes the whole cached conversation at every frontier step: the reduced prefix stays byte-identical and the Anthropic adapter keeps a cache checkpoint at its end, so a step only writes what changed. Thanks to @lee98www and @daehwanahn for the measured reports ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+
+- Compaction no longer keeps the previous turn when an invisible entry, such as an extension note, sits just before the kept message, and forced recovery after a "prompt is too long" error no longer picks the same cut again when such an entry leads the session ([#3864](https://github.com/code-yeongyu/senpi/issues/3864)).
+- Anthropic Subscription: a turn retried on another account after a failure is now logged as an account switch rather than a timeout retry, and every continuity decision names the serving account by a short digest, salted per install so the account name cannot be recovered from it. A switch to another account always writes the whole prompt cache again, so the logs now show which seat paid for it. Thanks to 욜로개발조아 for the measured report ([omo#10304](https://github.com/code-yeongyu/oh-my-openagent/issues/10304)).
+- `AGENTS.override.md` now also replaces the `AGENTS.md` / `CLAUDE.md` in its directory for project rules and nested `AGENTS.md` injection, not only for startup context files. The shadowed files no longer reach the model through the project-rules block or on file reads ([#3948](https://github.com/code-yeongyu/senpi/issues/3948)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
+- RPC clients can tell a session that the user started typing with `record_user_activity` (`kind: "draft"`, capability `user_activity`). With prompt-cache keep-alive enabled and an eligible model, the session then warms the first turn's prompt cache while the user is still typing, as the terminal editor already does ([#3859](https://github.com/code-yeongyu/senpi/issues/3859)).
 - A user message's session entry now records where its input came from: `inputSource` on the `message` entry is `interactive`, `rpc` or `extension`, the same value its `input` event reported, so an extension can replay a resumed session's transcript with the same trust it applied live. It is stored on the entry only and never sent to a provider. Queued input restored after a host restart keeps its source; input requeued by a session move, edited input, and records from before this change carry no `inputSource` ([code-yeongyu/oh-my-openagent#10378](https://github.com/code-yeongyu/oh-my-openagent/issues/10378)).
 
 ### Changed
@@ -13,6 +36,13 @@
 - An RPC client that declares `interactive_user` in `set_client_info` keeps that role for the life of its connection: a later `set_client_info` that adds or drops it is refused with `connection_role_fixed`, so the heartbeat must repeat the same capability list. The role marks a person's client and is what may Stop or release a pause in senpi#3811 ([#3811](https://github.com/code-yeongyu/senpi/issues/3811)).
 
 ### Fixed
+
+- Saving a login of the other kind (an API key over an OAuth login, or the reverse) now replaces the stored credential instead of storing one that is never used; the previous credential is backed up first and the replacement is reported (`login_api_key` answers `data.replaced`/`data.backupPath`, an RPC OAuth login's `auth_login_end` carries `replaced`/`backupPath`; `/login` shows a warning). A mixed credential written by older releases is left in use as it is and reported with the `/login` step that switches it; loading never changes which credential bills. The notice is shown once per change in the TUI, print mode and model listing, and `/account` marks the unused slot and refuses to pin it ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
+- A busy persistent command monitor is no longer muted after 200 matched lines a day. It wakes the session at most 12 times an hour on average (setting `terminal.monitorWakesPerHour`, or `wakes_per_hour` on the monitor, which survives a restart); lines that arrive in between are delivered together in the next wake, and lines beyond one wake's size are written to a per-monitor file that the wake names, so no line is lost. Only a real flood is paused: more than 120 matched lines a minute for 5 minutes in a row (`terminal.monitorRunawayLinesPerMinute`, `terminal.monitorRunawayMinutes`) pauses the monitor with a notice that says how to resume it ([#3889](https://github.com/code-yeongyu/senpi/issues/3889)).
+- A `monitor` rpc watch no longer keeps the hosts it watches alive. Its connection now subscribes as an observer, so a watched task host still exits when idle; before, a `children` or `all` watch kept every task shard host on the machine running ([#3956](https://github.com/code-yeongyu/senpi/issues/3956)).
+- A confirmed host stop can now name the exact generation, pid and process start time with `--expected-generation`; if the holder changed, the engine refuses without signalling it ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)). On Windows, where no process start time is recorded, the stop binds the pid, instance and generation instead, and a stale confirmation is reported before the live-sessions check.
+
+- When another process's engine host holds the shared socket and stops answering, `host ensure` now says which one: the refusal names its pid, engine version, launch profile and the process that started it, in the error and in the `--json` payload's `holder` ([omo-desktop-app#3561](https://github.com/sisyphuslabs/omo-desktop-app/issues/3561)).
 
 - An answer to a question that arrives while a session is starting up now counts as your input, so it releases held background work like any other answer ([#3917](https://github.com/code-yeongyu/senpi/issues/3917)).
 - Responses prompt-cache keys now follow the stable prefix across sessions and task children, including remote compaction. Session routing stays separate from cache affinity ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
@@ -22,7 +52,8 @@
 - On Windows, input sent while a turn was running no longer gets stuck. Every save of a queued input failed with `EPERM` (the session file was flushed through a read-only handle), and each reopen replayed the input and failed again. The same failure was also taken for a model error, so the session ran through its whole fallback chain in under a second and stayed on the last model. A local file or journal error now shows as a local error naming the file, and the session keeps its model ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
 - A goal waiting on a subscription limit now retries at the provider's reset time instead of immediately retrying the spent account. Structured quota/rate-limit resets and retry-after hints take precedence over legacy error text; failures without a reset keep the existing backoff ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
 - Switching a long conversation to a model with a smaller context window while the current model is at its usage limit now applies the switch at the next message. Before, the conversation was reduced to fit, but the switch was still refused with "cannot switch ... Compact the session, then revalidate and retry the model switch" ([#3828](https://github.com/code-yeongyu/senpi/issues/3828)).
-- `AGENTS.override.md` now also replaces the `AGENTS.md` / `CLAUDE.md` in its directory for project rules and nested `AGENTS.md` injection, not only for startup context files. The shadowed files no longer reach the model through the project-rules block or on file reads ([#3948](https://github.com/code-yeongyu/senpi/issues/3948)).
+- `login_api_key` takes its replacement record before it waits for the model refresh, so a concurrent OAuth login for the same provider always keeps its own `replaced` / `backupPath` ([#3952](https://github.com/code-yeongyu/senpi/issues/3952)).
+
 ### Removed
 
 ## [2026.10.21-1] - 2026-10-21
@@ -39,7 +70,6 @@
 ### Fixed
 
 - An idle RPC host (one open session, no work) no longer wakes about eleven times a second. While its supervisor pipe is watched, the supervisor pid is checked every 5 s instead of every 250 ms, and the event-loop stall probe ticks once a second after 2 s without session work, going back to 200 ms as soon as a session works. This cuts the idle CPU of every thread host the desktop keeps open ([#3738](https://github.com/code-yeongyu/senpi/issues/3738)).
-- Saving a login of the other kind (an API key over an OAuth login, or the reverse) now replaces the stored credential instead of storing one that is never used; the previous credential is backed up first and the replacement is reported (`login_api_key` answers `data.replaced`/`data.backupPath`, an RPC OAuth login's `auth_login_end` carries `replaced`/`backupPath`; `/login` shows a warning). A mixed credential written by older releases is left in use as it is and reported with the `/login` step that switches it; loading never changes which credential bills. The notice is shown once per change in the TUI, print mode and model listing, and `/account` marks the unused slot and refuses to pin it ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 ### Removed
 
 ## [2026.10.20-1] - 2026-10-20

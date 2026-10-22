@@ -1098,6 +1098,22 @@ function markSystemMessageCacheCheckpoint(message: MessageParam, cacheControl: C
 	}
 }
 
+/** Marks the last block that accepts `cache_control` (thinking blocks do not); false when none does. */
+function markAssistantMessageCacheCheckpoint(
+	blocks: ContentBlockParam[],
+	cacheControl: CacheControlEphemeral,
+): boolean {
+	for (let index = blocks.length - 1; index >= 0; index--) {
+		const block = blocks[index];
+		if (block.type === "text" || block.type === "tool_use") {
+			block.cache_control = cacheControl;
+			return true;
+		}
+		if (block.type === "thinking" || block.type === "redacted_thinking") return false;
+	}
+	return false;
+}
+
 function markUserMessageCacheCheckpoint(message: MessageParam, cacheControl: CacheControlEphemeral): boolean {
 	if (message.role !== "user") return false;
 	if (Array.isArray(message.content)) {
@@ -2334,6 +2350,15 @@ function buildParams(
 	});
 	// The prompt travels in `params.system`; the leading system message is not a turn.
 	const conversationMessages = initialSystemMessage ? transformedMessages.slice(1) : transformedMessages;
+	// Context reduction marks the last message its frontier leaves unchanged: on a frontier step both the
+	// old boundary (read) and the new one (written for the next step) are marked. Two checkpoints fit
+	// only when the system block holds one, which then also covers the tools before it (senpi#3242).
+	const stablePrefixMarkers = conversationMessages.filter(
+		(message) => message.role === "assistant" && message.promptCacheBreakpoint === true,
+	).length;
+	const systemHoldsCheckpoint = isOAuthToken || initialSystemText.length > 0;
+	const stablePrefixCheckpointLimit =
+		stablePrefixMarkers >= 2 && systemHoldsCheckpoint ? 2 : Math.min(1, stablePrefixMarkers);
 	// Native tool changes reference tools by name, so a redefined name cannot be expressed,
 	// and Anthropic rejects a tool list where every tool is deferred, so there must be an
 	// initial active tool to anchor the deferred ones. Otherwise the current tool list is sent.
@@ -2403,6 +2428,7 @@ function buildParams(
 		normalizeToolName,
 		midConvoEffort ? model.provider : undefined,
 		nativeToolChanges,
+		stablePrefixCheckpointLimit,
 	);
 	const messages = midConvoEffort
 		? insertThinkingLevelMessages(convertedMessages, activeEffort)
@@ -2466,7 +2492,8 @@ function buildParams(
 		});
 	}
 
-	const toolCacheControl = compat.supportsCacheControlOnTools ? cacheControl : undefined;
+	const toolCacheControl =
+		compat.supportsCacheControlOnTools && stablePrefixCheckpointLimit < 2 ? cacheControl : undefined;
 	if (nativeToolChanges) {
 		// Initial tools stay active with the cache breakpoint on the last one. Every later
 		// declaration is deferred and only surfaced by its `tool_addition` block; removed
@@ -2691,10 +2718,12 @@ function convertMessages(
 	normalizeToolName: (name: string) => string = (name) => name,
 	managedProvider?: string,
 	nativeToolChanges = false,
+	stablePrefixCheckpointLimit = 0,
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	const loadedToolNames = new Set<string>();
+	let stablePrefixCheckpoints = 0;
 	// Later system messages are held back and emitted directly before the next assistant
 	// message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
 	// immediately follow their `tool_use`, so a system message between them is rejected; this
@@ -2886,6 +2915,14 @@ function convertMessages(
 				content: blocks,
 			});
 			if (
+				cacheControl &&
+				msg.promptCacheBreakpoint === true &&
+				stablePrefixCheckpoints < stablePrefixCheckpointLimit &&
+				markAssistantMessageCacheCheckpoint(blocks, cacheControl)
+			) {
+				stablePrefixCheckpoints++;
+			}
+			if (
 				managedProvider !== undefined &&
 				msg.api === "anthropic-messages" &&
 				msg.provider === managedProvider &&
@@ -2934,7 +2971,11 @@ function convertMessages(
 		markSystemMessageCacheCheckpoint(lastParam, cacheControl);
 		return { messages: params, assistantLevels };
 	}
-	const retainPrecedingCheckpoint = isToolLoopContinuation(params);
+	// Four breakpoints at most: system, tools or a second stable-prefix checkpoint, a stable-prefix
+	// checkpoint and the final user turn. A stable-prefix checkpoint takes the preceding tool-loop
+	// checkpoint's slot; the final checkpoint's lookback already reaches the previous request's entry
+	// two blocks back (senpi#3242).
+	const retainPrecedingCheckpoint = stablePrefixCheckpoints === 0 && isToolLoopContinuation(params);
 	if (cacheControl && params.length > 0 && markUserMessageCacheCheckpoint(params[params.length - 1], cacheControl)) {
 		if (retainPrecedingCheckpoint) {
 			for (let index = params.length - 2; index >= 0; index--) {

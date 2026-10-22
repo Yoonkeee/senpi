@@ -16,6 +16,25 @@
 
 - `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
 
+## 2026-10-22 - The native grep probe tests never build the addon inside a CI test hook (senpi#3978)
+
+### What changed
+
+- `scripts/native-grep-addon.mjs`: `resolveNativeGrepAddon` picks the exported path, then a local addon, and otherwise builds locally, but refuses in CI with a message naming the missing "Build native grep addon" step. `scripts/native-grep-addon.test.mjs` covers the four cases.
+- `scripts/probe-native-grep.test.mjs`: the `before()` hook uses the resolver. A failed local build now reports how to build the addon or set `SENPI_GREP_NATIVE_PATH`.
+
+### Why
+
+- `scripts/probe-native-grep.test.mjs`: in CI the hook ran a cold release build with a 300 s timeout, so a slow runner failed all six tests with a bare `spawnSync npm ETIMEDOUT` that named no cause.
+
+### Why an extension could not handle it
+
+- `scripts/probe-native-grep.test.mjs`: repository test scripts.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
+
 ## 2026-10-19 - Release commands that read large output no longer fail with ENOBUFS
 
 ### What changed

@@ -1203,13 +1203,13 @@ function findProjectedCutPoint(
 		);
 	if (isRecoveryOmissionSuffix) cutIndex++;
 
+	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
+	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	while (cutIndex > startIndex) {
 		const previous = entries[cutIndex - 1];
 		if (previous.sourceEntry.type === "compaction" || previous.messages.length > 0) break;
 		cutIndex--;
 	}
-	const startsTurn = isProjectedTurnStart(entries[cutIndex]);
-	const turnStartIndex = startsTurn ? -1 : findProjectedTurnStartIndex(entries, cutIndex, startIndex);
 	return {
 		firstKeptEntryIndex: cutIndex,
 		turnStartIndex,
@@ -1248,7 +1248,7 @@ export function prepareCompaction(
 	let cutPoint = findProjectedCutPoint(projectedEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 
 	if (forceProgress && cutPoint.firstKeptEntryIndex === boundaryStart) {
-		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart + 1, boundaryEnd)[0];
+		const nextCutPoint = findProjectedValidCutPoints(projectedEntries, boundaryStart, boundaryEnd)[1];
 		if (nextCutPoint !== undefined) {
 			const turnStartIndex = findProjectedTurnStartIndex(projectedEntries, nextCutPoint, boundaryStart);
 			cutPoint = {

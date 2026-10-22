@@ -12,7 +12,8 @@ import {
 	type TerminalExtensionState,
 } from "./extension-state.ts";
 import { currentLeaseToken, releaseTerminalLease, retireLeaseToken } from "./manifest-lease.ts";
-import { MonitorNotifier } from "./monitor-notify.ts";
+import { MonitorNotifier, type MonitorSpillResult } from "./monitor-notify.ts";
+import { appendMonitorOverflow } from "./monitor-overflow-file.ts";
 import { terminalStateDir } from "./monitor-state-dir.ts";
 import { MONITOR_STATUS_KEY } from "./monitor-status.ts";
 import { MonitorStatusTicker } from "./monitor-status-ticker.ts";
@@ -31,6 +32,33 @@ import { createBashResizeTool } from "./tools/bash-resize.ts";
 import { TERMINAL_CHILD_JOB_KINDS, terminalChildJob } from "./tools/child-placement.ts";
 import { createKillBashTool } from "./tools/kill-bash.ts";
 import { bindTerminalManifestWriter, createMonitorTool } from "./tools/monitor.ts";
+
+/**
+ * Only paced (persistent command) watches of a session with a durable state dir get an overflow file.
+ * A failing file is reported once per monitor, not once per spilled chunk.
+ */
+function spillMonitorOverflow(
+	state: TerminalExtensionState,
+	warned: Set<string>,
+	id: string,
+	lines: readonly string[],
+): MonitorSpillResult | undefined {
+	const terminalDir = terminalStateDir(state.ctx);
+	const monitorId = state.bundle?.manager.monitorIdOf(id);
+	if (terminalDir === undefined || monitorId === undefined || state.bundle?.monitors.wakePacing(id) === undefined)
+		return undefined;
+	try {
+		return appendMonitorOverflow(terminalDir, monitorId, lines);
+	} catch (error) {
+		if (warned.has(monitorId)) return undefined;
+		warned.add(monitorId);
+		state.ctx?.ui?.notify?.(
+			`Could not write the overflow file of ${monitorId}: ${error instanceof Error ? error.message : String(error)}`,
+			"warning",
+		);
+		return undefined;
+	}
+}
 
 function shouldStepAside(ctx: ExtensionContext | undefined): boolean {
 	return isAnthropicBashEnabled() && ctx?.model?.api === "anthropic-messages";
@@ -118,12 +146,18 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			getMode: () => state.settings.notify,
 		});
 		state.monitorNotifier?.dispose();
+		const overflowWarned = new Set<string>();
 		state.monitorNotifier = new MonitorNotifier({
 			sendMessage: (message, options) => pi.sendMessage(message, options),
 			getContext: () => state.ctx,
 			getMode: () => state.settings.notify,
 			getSettings: () => state.settings.monitor,
 			pauseMonitors: (ids) => state.bundle?.monitors.pause(ids) ?? [],
+			wakesPerHour: (id) => {
+				const pacing = state.bundle?.monitors.wakePacing(id);
+				return pacing === undefined ? undefined : (pacing.wakesPerHour ?? state.settings.monitor.wakesPerHour);
+			},
+			spillOverflow: (id, lines) => spillMonitorOverflow(state, overflowWarned, id, lines),
 		});
 		const sessionKey = sessionKeyOf(ctx);
 		if (event.reason === "reload") {
@@ -138,6 +172,7 @@ export function registerTerminalExtension(pi: ExtensionAPI): void {
 			state.bundle = createBundle(state);
 		}
 		state.bundle ??= createBundle(state);
+		state.bundle.monitors.setRunawayGuard(state.settings.monitorRunaway);
 		state.bundle.bind(bundleSinks(pi, state));
 		const holdsLease = sessionKey !== undefined && currentLeaseToken(encodedSessionId(sessionKey)) !== undefined;
 		if (event.reason === "reload" && holdsLease) {

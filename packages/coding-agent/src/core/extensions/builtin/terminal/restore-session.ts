@@ -18,6 +18,7 @@ import {
 	releaseTerminalLease,
 	retireLeaseToken,
 } from "./manifest-lease.ts";
+import { sweepMonitorOverflowFiles } from "./monitor-overflow-file.ts";
 import { removeMonitorStateDir, terminalStateDir } from "./monitor-state-dir.ts";
 import { ownProcessStartedAtMs, processBootAtMs } from "./process-identity.ts";
 import { type RestoreDigest, restoreTerminalState } from "./restore.ts";
@@ -158,6 +159,7 @@ export async function startPersistence({ pi, state, toolCtx, sessionKey }: Start
 		void sweepTerminalStateDir(dir, { self, keep: new Set([`${encoded}.lease`, `${encoded}.json`]) }).catch(
 			() => undefined,
 		);
+		void sweepMonitorOverflowFiles(dir).catch(() => undefined);
 		flushRestoreDigest(pi, state);
 		decided();
 	};

@@ -34,6 +34,7 @@ it("holds a persistent monitor restore event without a provider request", async 
 			maxLinesPerInjection: 50,
 			maxCharsPerInjection: 4096,
 			wakeBudget: 5,
+			wakesPerHour: 12,
 		}),
 		pauseMonitors: () => [],
 		scheduler,

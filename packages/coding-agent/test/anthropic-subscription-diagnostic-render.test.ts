@@ -166,7 +166,14 @@ describe("Claude SDK OAuth continuity diagnostics", () => {
 		expect(result.diagnostics).toEqual([
 			expect.objectContaining({
 				type: "claude_sdk_oauth_session_continuity",
-				details: { kind: "delta", reason: "prefix_matched", deltaMessages: 1 },
+				// The serving seat as a digest, unchanged on a healthy turn (oh-my-openagent#10304).
+				details: {
+					kind: "delta",
+					reason: "prefix_matched",
+					deltaMessages: 1,
+					seat: expect.stringMatching(/^[0-9a-f]{8}$/),
+					seatChanged: false,
+				},
 			}),
 		]);
 	});

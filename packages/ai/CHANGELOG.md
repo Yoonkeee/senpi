@@ -6,6 +6,20 @@
 
 ### Added
 
+### Changed
+
+### Fixed
+
+- `AssistantMessage.promptCacheBreakpoint?: true` marks the end of a stable prefix; the Anthropic adapter keeps a cache checkpoint there, so context reduction no longer re-writes the cached conversation at every step ([#3242](https://github.com/code-yeongyu/senpi/issues/3242)).
+
+### Removed
+
+## [2026.10.21-2] - 2026-10-22
+
+### Breaking Changes
+
+### Added
+
 - `AssistantMessage.timing` (`AssistantMessageTiming`): optional response timing stamped by the agent loop ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
 
 - `AssistantMessage.failureSource?: "local"` marks a failure raised by local code rather than a provider, so retry and model fallback can skip it ([#3866](https://github.com/code-yeongyu/senpi/issues/3866)).
@@ -16,10 +30,13 @@
 
 ### Fixed
 
+- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 - Claude usage-limit failures retain the reset time from spent five-hour and weekly windows, so goal recovery can wait until the account is usable again ([#3825](https://github.com/code-yeongyu/senpi/issues/3825)).
 - OpenAI (Completions and Responses) and Google (Gemini API and Vertex) leave `usage.reasoning` unset when the provider reports no reasoning count, instead of reporting 0, as the `Usage` contract documents ([#3879](https://github.com/code-yeongyu/senpi/issues/3879)).
 
 - Responses prompt-cache keys now follow the model, instructions, and tool schemas instead of session ids across OpenAI, ChatGPT subscription, and Azure. New sessions and task children with identical prefixes share cache affinity, and Responses tools render in deterministic name order ([omo#10775](https://github.com/code-yeongyu/oh-my-openagent/issues/10775)).
+
+- Cursor: Claude Opus 5.5, Fable 5.1, Sonnet 5.5, Haiku 5.5, Muse Wonder, Muse Spark 1.3, Grok 4.7, Gemini 4 Argon, Gemini 3.8 Flash and Auto advertise the context window Cursor actually serves instead of the 200k placeholder; Haiku 5.5 and Grok 4.7 Fast get clean names, and Kimi K3, Muse and Grok 4.5/4.6 accept images ([#3620](https://github.com/code-yeongyu/senpi/issues/3620)).
 
 ### Removed
 
@@ -37,8 +54,6 @@
 - The bundled model catalog is refreshed from models.dev and the providers' model listings (`amazon-bedrock`, `huggingface`, `opencode`, `opengateway`, `openrouter`, `venice`).
 
 ### Fixed
-
-- `appendLoginSlot` replaces a credential of the other kind instead of adding an unusable slot; new `auth/pool/kinds` helpers classify slots and report the unused kinds of a mixed credential ([#3448](https://github.com/code-yeongyu/senpi/issues/3448))
 
 ### Removed
 

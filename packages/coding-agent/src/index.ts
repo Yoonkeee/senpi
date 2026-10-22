@@ -510,6 +510,7 @@ export {
 	type HostGcOptions,
 	type HostGcResult,
 	type HostGenerationRow,
+	type HostHolder,
 	type HostLaunchSpec,
 	type HostLaunchSpecCore,
 	HostLaunchSpecError,

@@ -1,3 +1,29 @@
+## 2026-10-21 - Persistent command monitors are paced instead of muted after 200 lines (senpi#3889)
+
+### What changed
+
+- `command-monitor-source.ts` / `shared.ts`: the rolling fire budget no longer mutes a watch. `DEFAULT_DURABLE_MONITOR_FIRE_BUDGET` and `FIRE_BUDGET_AUTO_MUTE_SUMMARY` are removed; the persisted `fireWindow` is still counted and written (a statistic, and older readers keep parsing). A durable command watch instead carries a runaway guard: more than `monitorRunawayLinesPerMinute` matched lines in each of `monitorRunawayMinutes` consecutive minutes pauses it with one summary starting `paused: runaway output` (`RUNAWAY_PAUSE_SUMMARY_PREFIX`) that names the rearm call. A quiet or skipped minute resets the run; resume clears it.
+- `monitor-notify.ts`: per-monitor wake pacing. A paced monitor (`wakesPerHour` dep) spends one token per wake from a bucket of `wakesPerHour` tokens refilled at `wakesPerHour` an hour; with no token its lines keep batching and the flush is scheduled for the next token. The batch caps (`maxLinesPerInjection`, `maxCharsPerInjection`) now apply per monitor, so a paced monitor holding lines cannot push another monitor's lines into overflow, and once a monitor overflows its later lines overflow too (inline lines stay first). Overflow lines go to the `spillOverflow` dep in chunks of 256, and the wake says `[N more lines in <path>]`; without a path it keeps the `peek bash_output` notice. The session-global wake budget is unchanged; the runaway summary, like the old mute summary, does not reset its streak.
+- Review fixes (same PR): a wake is filled within `maxCharsPerInjection`, measured from the real wrapper (reminder tags, pause notice, each monitor's actual overflow notice) rather than an assumed reserve (`monitor-wake-fit.ts`, new). Monitors with a summary go first, then queue order; a monitor that does not fit whole waits for the next wake; only an oversized first monitor sends a prefix and keeps the rest and its overflow queued. A shared wake is therefore never clipped. A session wake-budget pause pauses only the monitors in that wake and keeps every other monitor's queued lines and unwritten overflow. A paced monitor out of tokens arms its flush for its next token instead of every coalesce window. Pacing, overflow bookkeeping, wake rendering and telemetry details moved to `monitor-wake-pacing.ts`, `monitor-overflow.ts`, `monitor-notify-format.ts` and `monitor-notify-details.ts` (new). The overflow file reports a rotation (the wake then names `<path>.1` too), a failing file warns once per monitor (`extension.ts`), pacing state is dropped when a monitor's summary goes out, and files older than a durable watch's lifetime are swept at session start (`restore-session.ts`).
+- `monitor-overflow-file.ts` (new): appends to `<terminal state dir>/overflow/<mon_id>.log` (0600, dir 0700), rotating to one `.1` copy at 4 MiB. It is outside `SENPI_MONITOR_STATE_DIR`, which is removed when a watch ends, while the agent may still read the overflow after the final wake.
+- `monitor-registry.ts`: `setRunawayGuard(guard)` (settings change across a reload; the registry does not) and `wakePacing(id)` (persistent command watches only, with the watch's own override).
+- `settings.ts` / `core/terminal-settings.ts`: `monitorWakesPerHour` (default 12, max 3600), `monitorRunawayLinesPerMinute` (default 120), `monitorRunawayMinutes` (default 5, max 1440).
+- `tools/monitor-schema.ts` / `tools/monitor.ts`: `wakes_per_hour` (integer 1..3600) on persistent command monitors; rejected on any other watch. It is recorded in the manifest spec (`wakesPerHour`, optional, ignored by older readers), parsed strictly, and re-applied by `durable-command.ts` on restore.
+- `extension.ts`: wires `wakesPerHour` (override or setting), `spillOverflow` and the runaway guard.
+
+### Why
+
+- 200 matched lines a day muted busy but healthy standing watches (chat bridges, CI feeds) mid-day, and every later line was dropped until a rearm. The cost the budget guarded against is wakes, and the notifier already coalesces lines into wakes, so pacing wakes bounds the cost (about 300 wakes a day per watch at the default) without losing a line, and only a sustained flood is paused, visibly.
+
+### Why an extension could not handle it
+
+- Monitor delivery and the registry are this builtin's own.
+
+### Expected merge conflict zones
+
+- MEDIUM: `monitor-notify.ts` `notifyEvent` / `#flush` / `#buildMessage`; `command-monitor-source.ts` `#consume`.
+- LOW: `settings.ts` defaults, `monitor-schema.ts` properties, the manifest model/parse/writer command fields.
+
 ## 2026-10-18 - An unreadable holder start time is reported as unproven (senpi#3658)
 
 ### What changed

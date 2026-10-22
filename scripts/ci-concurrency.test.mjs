@@ -14,14 +14,16 @@ const CONTEXT = String.raw`github\.(ref|sha)`;
  * Evaluate the expression shapes the CI concurrency block may use, for one event:
  * - `${{ github.event_name == '<event>' }}` (or `!=`), a boolean;
  * - `<prefix>${{ github.<ref|sha> }}` or `<prefix>${{ github.event_name == '<event>' && github.<ref|sha> || github.<ref|sha> }}`,
- *   a group name.
+ *   a group name. The prefix may contain `${{ github.workflow }}`, which is the caller's workflow name when another
+ *   workflow calls ci.yml (senpi#3957).
  * Anything else fails, so a new shape has to be taught here instead of being guessed at.
  * @param {unknown} value
- * @param {{event: string, ref: string, sha: string}} run
+ * @param {{event: string, ref: string, sha: string, workflow?: string}} run
  */
 function evaluate(value, run) {
 	if (typeof value === "boolean") return value;
-	const text = String(value);
+	const workflowName = (run.workflow ?? "CI").replace(/[^\w-]/g, "_");
+	const text = String(value).replace(/\$\{\{\s*github\.workflow\s*\}\}/g, workflowName);
 	const eventTest = (operator, event) => (operator === "==" ? run.event === event : run.event !== event);
 	const boolean = new RegExp(String.raw`^\$\{\{\s*${EVENT_TEST}\s*\}\}$`).exec(text);
 	if (boolean) return eventTest(boolean[1], boolean[2]);
@@ -34,7 +36,7 @@ function evaluate(value, run) {
 }
 
 const mainPush = (sha) => ({ event: "push", ref: "refs/heads/main", sha });
-const pullRequest = (sha) => ({ event: "pull_request", ref: "refs/pull/7/merge", sha });
+const pullRequest = (sha, workflow = "CI") => ({ event: "pull_request", ref: "refs/pull/7/merge", sha, workflow });
 
 describe("CI concurrency (senpi#2960)", () => {
 	it("gives each main commit its own run group, so a later merge never cancels, queues or replaces its run", () => {
@@ -49,5 +51,10 @@ describe("CI concurrency (senpi#2960)", () => {
 		const { group, "cancel-in-progress": cancel } = workflow.concurrency;
 		assert.equal(evaluate(group, pullRequest("p1")), evaluate(group, pullRequest("p2")));
 		assert.equal(evaluate(cancel, pullRequest("p1")), true);
+	});
+
+	it("keeps a run-full-ci label run out of the PR's own group, so neither cancels the other (senpi#3957)", () => {
+		const { group } = workflow.concurrency;
+		assert.notEqual(evaluate(group, pullRequest("p1")), evaluate(group, pullRequest("p1", "CI full set (run-full-ci label)")));
 	});
 });

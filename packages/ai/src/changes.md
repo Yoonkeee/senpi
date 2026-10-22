@@ -1,3 +1,21 @@
+## 2026-10-22 - AssistantMessage.promptCacheBreakpoint (senpi#3242)
+
+### What changed
+
+- `packages/ai/src/types.ts`: `AssistantMessage` gains optional `promptCacheBreakpoint?: true`, a request-only hint that the history up to and including the message is a stable prefix. Context reduction sets it on copies; it is never persisted.
+
+### Why
+
+- `packages/ai/src/types.ts`: context reduction must tell the provider adapter where the prefix it leaves unchanged ends, so the adapter can keep a cache checkpoint there instead of re-writing the cached conversation at every frontier step.
+
+### Why an extension could not handle it
+
+- `packages/ai/src/types.ts`: the hint has to travel on the message the adapter converts, which is a core message contract.
+
+### Expected merge conflict zones
+
+- `packages/ai/src/types.ts`: the end of `AssistantMessage`.
+
 ## 2026-10-21 - AssistantMessage.timing (senpi#3879)
 
 ### What changed
@@ -72,6 +90,44 @@ The map is private to `pi-ai`; a consumer can only enumerate it through an expor
 
 - `packages/ai/src/env-api-keys.ts`: the map moved out of `getApiKeyEnvVars`, and the two exports sit above it.
 
+
+## 2026-10-18 - Cursor families published after the 2026-08-18 capture (senpi#3620)
+
+### What changed
+
+- `src/cursor/capability-table.ts` (split out of `src/cursor/model-capabilities.ts`, which keeps the types, parser
+  and alias lookups): capability entries for `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`,
+  `claude-haiku-5-5`, `muse-wonder-1.0`, `muse-spark-1.3`, `grok-4.7`, `gemini-4-argon`, `gemini-3.8-flash` and
+  `default`. Each window is the ceiling the server reported on the first checkpoint on 2026-10-18 for the suffix
+  variant senpi sends; `maxWindow` is the largest context option AvailableModels offers. `reasoning_effort` joins
+  `CursorParameterId` (Sonnet 5.5, Haiku 5.5, Muse Wonder, Grok 4.7 and the Gemini 4/3.8 rows name the axis so).
+- `src/cursor/display-name.ts` (moved out of `catalog-grouping.ts`): names drop zero-width characters and doubled
+  spaces, the Haiku 5.5 plain group drops Cursor's "No Thinking" whole, and a thinking group whose label never said
+  so gains "Thinking".
+- `src/cursor/model-input.ts` (moved out of `api/cursor-agent.ts`): image input follows AvailableModels'
+  `supportsImages`, adding Kimi K3, Muse and Grok 4.5/4.6.
+- `src/cursor/model-capabilities.ts` + `src/cursor/display-name.ts` + `src/cursor/catalog-grouping.ts` (review LOW-1 fix):
+  the ten families' entries carry the new `served-checkpoint` evidence kind, and a display name drops its `1M` size
+  token when the measured window is smaller — Opus 5.5, Fable 5.1 and Muse Spark 1.3 serve 300k for the default option
+  senpi sends; Cursor's `1M` label names the extended-context tier (`maxWindow`). `available-models` entries keep
+  Cursor's label untouched (their mismatch is senpi#3621's scope).
+
+### Why
+
+- The ten families answered live requests through the #2038 derived grouping but advertised the 200k placeholder
+  window, two carried broken names, and image-capable families were offered as text-only.
+- A picker name promising 1M while the served window is 300k misleads (review LOW-1); the name now follows the window
+  the server was measured serving, sourced from the committed 2026-10-18 checkpoint fixture and Cursor's published
+  "up to 1M with extended context" tier.
+
+### Why an extension couldn't do it
+
+- Catalog normalization and discovery run inside the provider before any extension sees a model.
+
+### Expected merge-conflict zones
+
+- `src/cursor/model-capabilities.ts`, `src/cursor/capability-table.ts`, `src/cursor/catalog-grouping.ts`, the
+  discovery block of `api/cursor-agent.ts`.
 ## 2026-10-16 - Image generation results carry the provider diagnostic (omo#10285)
 
 ### What changed

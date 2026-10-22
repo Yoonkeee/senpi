@@ -1,3 +1,64 @@
+## 2026-10-21 - RpcClient can publish session context (senpi#3905)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `RpcClient.setSessionContext(patch, sessionId?)` sends `set_session_context` for the attached session (or the one named) and rejects with `RpcCommandError` carrying the host's code (`session_not_attached`, `invalid_session_context`).
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the command existed on the host, but an SDK client had no way to send it (`send` is private). A task runner must publish `task_status` through its attachment before it detaches, so a successor host can recognize a finished session (senpi#3853, oh-my-openagent#10778).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: the RPC client is a public SDK class of the RPC mode, not part of the extension API.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-client.ts`, the method before `closeSession`.
+
+## 2026-10-21 - RPC clients can report draft activity, so the prompt-cache prewarm can run while a desktop user types (senpi#3859)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/rpc-types.ts`: new command `{ type: "record_user_activity", kind: "draft" }`, its success response, and the capability constant `USER_ACTIVITY_CAPABILITY` (`"user_activity"`).
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `record_user_activity` calls `session.recordUserActivity("draft")`; any other kind is refused with `invalid_argument`. The classic `get_protocol_info` lists `user_activity`.
+- `packages/coding-agent/src/modes/rpc/host-capabilities.ts`: the multi-session host lists `user_activity`.
+- `packages/coding-agent/src/modes/rpc/rpc-client.ts`: `recordDraftActivity()`.
+
+### Why
+
+The first-activity prewarm (senpi#3140) fires on the first `draft` activity, but only the interactive editor could emit one. An RPC session's first activity was always the prompt itself, which consumes the opportunity without a warm call, so the desktop never warmed the prefix while its user typed.
+
+### Why an extension could not handle it
+
+The activity source is deliberately host-only: `recordUserActivity` is not reachable from the extension API or its event bus (senpi#3140 provenance rule), so only the RPC command surface can expose it to a client.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/modes/rpc/rpc-types.ts` command and response unions next to `set_session_name`; `packages/coding-agent/src/modes/rpc/connection-handler.ts` `handleCommand` switch and the classic capability list; `packages/coding-agent/src/modes/rpc/rpc-client.ts` next to `setSessionName`.
+
+## 2026-10-20 - A foreign_writer refusal names the generation in the way (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-holder.ts` (new, an import-free leaf): `HostHolder` (`pid`, `instanceId`, `generation`, `engineVersion`, `launchProfileId`, `writerPid`) and `describeHostHolder`.
+- `packages/coding-agent/src/modes/rpc/host-decision.ts`: `HostEnsureRefusedError` takes an optional `holder` (kept on the error and appended to its message as `(held by pid N, engine X, launch profile P, started by pid W)`); the `foreign_writer` wording says the host accepts but did not answer and names `host stop --force`.
+- `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: `refuseIfForeignHeld` (the `foreign_writer` gate moved out of `host-ensure.ts`, unchanged in when it refuses) builds the holder from the registration with `readHostHolder`, which also reads the build and launch profile the generation record stores.
+- `packages/coding-agent/src/modes/rpc/host-ensure.ts`: the `start` branch calls `refuseIfForeignHeld` where it threw the bare refusal.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: the `host ensure` refusal payload carries `holder`.
+
+### Why
+
+- A host another client registered on the socket (a terminal `omo` session's CLI host, a second app copy, a dev build) that accepts but does not answer makes every ensure refuse `foreign_writer`. The refusal carried only its reason, so no client could say who was in the way; the desktop told the user to restart, which cannot help (omo-desktop-app#3561). Regression: `test/suite/rpc-host-ensure-foreign-holder.test.ts`.
+
+### Why an extension could not handle it
+
+- The refusal is produced inside `ensureHost` under the endpoint lock and returned by the `senpi host` CLI; no extension runs there.
+
+### Expected merge conflict zones
+
+- LOW: fork-only files; the `foreign_writer` line of `ensureHostLocked`'s `start` branch.
+
 ## 2026-10-21 - interactive_user connection role (senpi#3811)
 
 ### What changed
@@ -7145,3 +7206,45 @@ The classic capability list in `connection-handler.ts`.
 ### Expected merge conflict zones
 
 - `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the start and the success branch of `startLogin`.
+
+
+## 2026-10-20 - A stop targets only the confirmed registration (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/host-stop-generation.ts`: the expected instance id, generation, pid and process start time, CLI decoding and registration comparison.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts`: conditional stops take the endpoint ensure lock, compare before probes and again before writing an intent, and refuse `stale_generation` without signalling on mismatch.
+- `packages/coding-agent/src/modes/rpc/host-runner.ts`: forwards the expected generation to the common stop implementation, and refuses a binding the endpoint no longer matches (`stale_generation` / `unknown_owner`) before the `sessions_live` census.
+- `packages/coding-agent/src/modes/rpc/host-stop.ts` (review fold): a bound stop signals only the RECHECKED expected generation's pid and instance, never a registration read that was not compared; `stopHost` throws on `drain` + `expectedGeneration`, as the CLI already refused. `compareStopGeneration` (`host-stop-generation.ts`) returns `proven` | `bound_without_start_time` | `stale` | `unprovable`: a null start time is `unknown_owner`, except that where the platform records none (`host-stop-start-time.ts`, Windows) a confirmation and registration that are both null bind pid + instance id + generation. `--expected-generation` accepts `processStartTime: null`. The both-null binding proves the same process before signalling (review FIX_FIRST): the registration names this endpoint, the pid's live start time (`host-stop-start-time.ts` `startedBeforeRegistration`, 10 s CIM budget) is no later than the registration file's mtime, so a reused pid is `unknown_owner`, and an answering host reports the confirmed instance id. Regression: `test/suite/host-stop-generation-identity.test.ts`.
+- `packages/coding-agent/src/modes/rpc/host-status.ts`: reports the registered process start time for confirmation; `packages/coding-agent/src/modes/rpc/host-status-all.ts` reports null for an unaddressable endpoint.
+- `packages/coding-agent/src/modes/rpc/host-holder.ts` and `packages/coding-agent/src/modes/rpc/host-ensure-liveness.ts`: holder evidence includes the recorded process start time.
+
+### Why
+
+- Checking only a pid before invoking an unqualified stop could terminate a newer, unconfirmed generation.
+
+### Why an extension could not handle it
+
+- The lifecycle lock and signal authority belong to the engine.
+
+### Expected merge conflict zones
+
+- LOW: stop options, status identity, runner stop request.
+
+## 2026-10-22 - login_api_key takes its replacement record before it awaits (#3952, hardening)
+
+### What changed
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: `login_api_key` takes the store's replacement record right after `set()`, before awaiting the registry refresh, instead of after it.
+
+### Why
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: a same-provider RPC OAuth login whose record was written during that await could have it taken by `login_api_key`, losing `replaced`/`backupPath` from its `auth_login_end`. #3486 narrowed that to a few microtasks; taking the record in the same step as `set()` closes it (#3952).
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts` owns the RPC auth commands.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/rpc/connection-handler.ts`: the `login_api_key` case.

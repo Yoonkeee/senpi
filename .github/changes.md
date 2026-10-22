@@ -1,3 +1,61 @@
+## 2026-10-22 - macOS/Windows CI jobs run on pull requests only for platform-specific diffs (senpi#3957)
+
+### What changed
+
+- `.github/workflows/ci.yml`: a `platform-scope` job runs `scripts/ci-platform-scope.mjs` on the PR's changed files and labels. The macOS and Windows-only jobs need it and run only when it outputs `full=true`; the ubuntu+windows matrices keep their Linux leg and add Windows only then. `Check and test` verifies its needs through the same script, which accepts `skipped` only for those jobs and only when the scope said `full=false`. The workflow is also callable (`workflow_call`), and its concurrency group is a fixed per-file prefix plus the workflow name, so a called run never cancels the PR's own run or another called workflow.
+- `.github/workflows/read-summary-binary-parity.yml`, `.github/workflows/session-worker-compile.yml`: the same scope job decides the macOS/Windows matrix legs; both also run on pushes to main with their PR paths, and are callable. Their concurrency groups use their own fixed prefix plus the workflow name; main pushes get one group per commit and are never cancelled.
+- The classifier also counts `packages/coding-agent/src/modes/rpc/**` and every file a macOS/Windows job of the classified workflow names in its steps (the suites it runs), read from the workflow file itself, so editing a Windows-tested suite still runs Windows.
+- `.github/workflows/session-worker-compile.yml` also gets a per-PR concurrency group (workflow + PR number, cancel in progress for PRs) so a new push cancels the superseded run.
+- `.github/workflows/ci-full-label.yml`: the `run-full-ci` label calls the three workflows in full on the labelled PR.
+
+### Why
+
+- Hosted macOS and Windows runners have little concurrency, and every PR ran about a dozen jobs on them, so PRs queued behind each other on platform runners even when they changed no platform code. Pushes to main still run the full set, so a platform regression surfaces right after merge.
+
+### Why an extension could not handle it
+
+- Workflow triggers and job conditions are repository CI configuration; no runtime extension point reaches them.
+
+### Expected merge conflict zones
+
+- The `on:` and `concurrency:` blocks of `ci.yml`, the `needs`/`if` lines of its macOS/Windows jobs and matrices, and the `Check and test` verify step.
+
+## 2026-10-21 - The combined macOS job keeps base per-step caps (senpi#3939)
+
+### What changed
+
+- `.github/workflows/ci.yml`: in `macos-combined`, the process-kernel and WebView suite steps go back to their base `timeout-minutes: 12` (from 20). The job cap drops from 115 to 99, the sum of the suite step caps plus 10 minutes of setup margin. The "Require the WebView suites to have executed" step runs only when the WebView suite step passed, as it did on base.
+
+### Why
+
+- `.github/workflows/ci.yml`: with 20-minute caps, a hung process-kernel suite held the scarce hosted macOS runner 8 minutes longer than before #3910. After a failed WebView suite, the executed check only added a second red step or a JSON read error.
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: step timeouts and conditions are repository CI configuration.
+
+### Expected merge conflict zones
+
+- `.github/workflows/ci.yml`: the `macos-combined` job's `timeout-minutes` lines and the WebView executed-check condition.
+
+## 2026-10-22 - Script tests get the senpi-grep addon from one CI build step (senpi#3978)
+
+### What changed
+
+- `.github/workflows/ci.yml`: `test-workspaces` sets up Rust with the Rust cache and builds the senpi-grep N-API addon once ("Build native grep addon"), exporting `SENPI_GREP_NATIVE_PATH` through `$GITHUB_ENV` before both script-test steps.
+
+### Why
+
+- `.github/workflows/ci.yml`: the script tests built the addon inside a test hook (a cold release Rust build with a 300 s timeout) on every run. On a slow runner it timed out and turned main red at 69396c732a (`spawnSync npm ETIMEDOUT`).
+
+### Why an extension could not handle it
+
+- `.github/workflows/ci.yml`: CI steps are repository configuration.
+
+### Expected merge conflict zones
+
+- None expected: the change is local to this repository's CI and test scripts.
+
 ## 2026-10-21 - One macOS runner executes all five CI suites (senpi#3130)
 
 ### What changed

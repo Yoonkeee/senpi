@@ -906,3 +906,20 @@ CLI argument semantics live in the executable entry, below any extension hook.
 ### Expected merge conflict zones
 
 Upstream edits to cli/args.ts at the next sync.
+## 2026-10-20 - Bind an operator stop to its confirmed generation (omo-desktop-app#3561)
+
+### What changed
+
+- `packages/coding-agent/src/cli/host-command.ts`: parses `--expected-generation` JSON and forwards its complete identity to the shared host runner; malformed or drain-combined input is a usage error. Existing conditional-handover parsing moves unchanged to `packages/coding-agent/src/cli/host-handover-args.ts` to keep the command module bounded.
+
+### Why
+
+- A confirmation must not authorize stopping a different generation that took over before the CLI ran.
+
+### Why an extension could not handle it
+
+- Host command parsing happens before extensions run.
+
+### Expected merge conflict zones
+
+- LOW: stop argument parsing and request construction.
