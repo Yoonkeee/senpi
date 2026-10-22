@@ -28,7 +28,7 @@ export async function createRpcSessionBinding(
 	entry: RpcSessionEntry,
 	writer: SessionEventWriter,
 	requestClose: () => void,
-	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo"> = {},
+	options: Pick<RpcConnectionOptions, "capabilities" | "clientInfo" | "connectionRoles"> = {},
 ): Promise<RpcSessionBinding> {
 	if (entry.worker) return entry.worker.bind(sessionId, writer, requestClose, options);
 	if (!entry.runtime) throw new Error("Session runtime was not created");

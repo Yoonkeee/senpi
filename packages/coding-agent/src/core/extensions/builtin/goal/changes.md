@@ -16,6 +16,10 @@
 
 `packages/coding-agent/src/core/extensions/builtin/goal/lifecycle-helpers.ts`, `packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: admitAndQueueGoalContinuation and lifecycle event registration; preserve the existing continuation latch and normal post-release rules.
 
+## 2026-10-20 - Honor provider reset metadata for goal recovery (senpi#3825)
+
+`provider-retry.ts` now reads future `quota`/`rate_limit` diagnostic `resetsAt` first, then the existing retry-after marker, before legacy ISO error text. The existing provider-recovery timer therefore parks until the named reset plus its margin rather than immediately retrying a spent account, publishing its existing `providerRetry` timer state with the reset deadline. Invalid or expired metadata falls through; auth classification and unknown-reset backoff are unchanged. Regression `3825-goal-limit-reset.test.ts` covers precedence and the event-driven two-hour scheduler boundary. The provider diagnostic also preserves spent Claude window resets; see `packages/ai/src/utils/changes.md`.
+
 ## 2026-10-17 - No fixed auto-continue cap; a no-progress guard instead (oh-my-openagent#10280)
 
 ### What changed

@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { parseRetryAfterMsMarker } from "@earendil-works/pi-ai/utils/retry-hint";
 import { lastAssistantMessage } from "./last-assistant-message.ts";
 
 export const PROVIDER_RETRY_BASE_MS = 15_000;
@@ -8,16 +9,28 @@ const WAKE_MARGIN_MS = 1_000;
 
 const ISO_INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g;
 
-function failureText(messages: readonly AgentMessage[]): string {
-	return lastAssistantMessage(messages)?.errorMessage ?? "";
-}
-
 /**
- * The earliest future instant the failed turn's error names (never the assistant's own text), e.g. a credential pool's
- * "blocked until 2026-10-14T12:15:00.000Z": the moment an account frees up.
+ * Prefer a provider's structured usage reset, then its retry-after marker. Legacy
+ * pool guidance falls back to the earliest future ISO instant in the error only.
  */
 export function providerRetryAt(messages: readonly AgentMessage[], now: number): number | undefined {
-	const instants = [...failureText(messages).matchAll(ISO_INSTANT)]
+	const failure = lastAssistantMessage(messages);
+	const diagnostic = failure?.providerDiagnostic;
+	const reset = diagnostic?.resetsAt;
+	if (
+		(diagnostic?.category === "quota" || diagnostic?.category === "rate_limit") &&
+		reset !== undefined &&
+		Number.isFinite(reset) &&
+		reset > now
+	) {
+		return reset;
+	}
+	const text = failure?.errorMessage ?? "";
+	const retryAfterMs = parseRetryAfterMsMarker(text);
+	if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+		return now + retryAfterMs;
+	}
+	const instants = [...text.matchAll(ISO_INSTANT)]
 		.map((match) => Date.parse(match[0]))
 		.filter((at) => Number.isFinite(at) && at > now);
 	return instants.length === 0 ? undefined : Math.min(...instants);

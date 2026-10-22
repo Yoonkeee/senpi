@@ -357,6 +357,52 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	it("auth_login_end names the API key an OAuth login replaced and where its backup is (senpi#3486)", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		harness.authStorage.registerOAuthProvider("scripted-oauth", {
+			name: "Scripted OAuth",
+			async login() {
+				return {
+					type: "oauth",
+					access: "scripted-access",
+					refresh: "scripted-refresh",
+					expires: 4_102_444_800_000,
+				};
+			},
+			async refresh(credentials) {
+				return credentials;
+			},
+			async toAuth(credentials) {
+				return { apiKey: credentials.access };
+			},
+		});
+		harness.authStorage.set("scripted-oauth", { type: "api_key", key: "sk-FAKE-previous" });
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+
+		const replacing = collected.waitFor((message) => message.type === "auth_login_end");
+		await handler.handleInputLine(JSON.stringify({ id: "replace", type: "login_start", provider: "scripted-oauth" }));
+		const end = await replacing;
+		expect(end).toMatchObject({
+			provider: "scripted-oauth",
+			success: true,
+			replaced: "api_key",
+			backupPath: expect.any(String),
+		});
+		const backupPath = String(end.backupPath);
+		expect(readFileSync(backupPath, "utf-8")).toContain("sk-FAKE-previous");
+		expect(harness.authStorage.takeReplacement("scripted-oauth")).toBeUndefined();
+
+		const sameKind = collected.waitFor((message) => message.type === "auth_login_end" && message !== end);
+		await handler.handleInputLine(JSON.stringify({ id: "again", type: "login_start", provider: "scripted-oauth" }));
+		const second = await sameKind;
+		expect(second).toMatchObject({ provider: "scripted-oauth", success: true });
+		expect(second).not.toHaveProperty("replaced");
+		expect(second).not.toHaveProperty("backupPath");
+		await handler.dispose();
+	});
+
 	it("writes response records only to the injected sink", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

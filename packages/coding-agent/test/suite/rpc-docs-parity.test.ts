@@ -38,7 +38,6 @@ const UNDOCUMENTED: Record<string, string> = {
 	get_follow_up_messages: "undocumented since it shipped",
 	get_steering_messages: "undocumented since it shipped",
 	import_jsonl: "undocumented since it shipped",
-	login_api_key: "undocumented since it shipped",
 	logout: "undocumented since it shipped",
 	record_bash_result: "undocumented since it shipped",
 	send_custom_message: "undocumented since it shipped",

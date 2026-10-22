@@ -128,11 +128,32 @@ import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.
 
 const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
-function collectAuthDiagnostics(authStorage: AuthStorage, context: string): AgentSessionRuntimeDiagnostic[] {
-	return authStorage.drainErrors().map((error) => ({
-		type: "warning",
-		message: `(${context}, auth storage) ${error.message}`,
-	}));
+/**
+ * Auth problems for a run's diagnostics. Each credential notice appears once per process; with
+ * `persistSeen` (a run a person reads) it is also recorded as seen, so later runs stay quiet until
+ * the problem changes (senpi#3486).
+ */
+export function collectAuthDiagnostics(
+	authStorage: AuthStorage,
+	context: string,
+	options: { persistSeen: boolean },
+): AgentSessionRuntimeDiagnostic[] {
+	return [
+		...authStorage.drainErrors().map((error) => error.message),
+		...authStorage.takePendingNotices(options).map((notice) => notice.message),
+	].map((message) => ({ type: "warning", message: `(${context}, auth storage) ${message}` }));
+}
+
+/** The TUI shows auth problems at startup; credential notices are marked seen once shown (senpi#3486). */
+export function interactiveAuthNotices(authStorage: AuthStorage): { messages: string[]; markSeen: () => void } {
+	const pending = authStorage.takePendingNotices({ persistSeen: false });
+	return {
+		messages: [
+			...authStorage.drainErrors().map((error) => error.message),
+			...pending.map((notice) => notice.message),
+		],
+		markSeen: () => authStorage.markNoticesSeen(pending.map((notice) => notice.id)),
+	};
 }
 
 export function collectExtensionLoadDiagnostics(
@@ -1281,7 +1302,7 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics([
 			...services.diagnostics,
 			...collectSettingsDiagnosticsWithContext(services.settingsManager, "model listing"),
-			...collectAuthDiagnostics(services.authStorage, "model listing"),
+			...collectAuthDiagnostics(services.authStorage, "model listing", { persistSeen: true }),
 		]);
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
 		await printThenExit(() => listModels(services.modelRuntime, searchPattern), 0);
@@ -1505,7 +1526,9 @@ export async function main(args: string[], options?: MainOptions) {
 					message: diagnostic.path ? `${diagnostic.path}: ${diagnostic.message}` : diagnostic.message,
 				})),
 		);
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "runtime creation"));
+		reportDiagnostics(
+			collectAuthDiagnostics(services.authStorage, "runtime creation", { persistSeen: appMode !== "rpc" }),
+		);
 	}
 	if (runtime.diagnostics.some((diagnostic) => diagnostic.type === "error")) {
 		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
@@ -1562,6 +1585,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
+			authNotices: interactiveAuthNotices(services.authStorage),
 			legacyPiEditNotice: legacyPiEditStartupNotice(),
 			modelFallbackMessage,
 			autoTrustOnReloadCwd,
@@ -1604,7 +1628,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode"));
+		reportDiagnostics(collectAuthDiagnostics(services.authStorage, "print mode", { persistSeen: true }));
 		stopChildReaper();
 		stopThemeWatcher();
 		restoreStdout();

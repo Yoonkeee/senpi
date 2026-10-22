@@ -1,3 +1,25 @@
+## 2026-10-20 - Keep Claude's spent-window reset in provider diagnostics (senpi#3825)
+
+`provider-diagnostic-sources.ts` adds `resetsAt` to a classified quota/rate-limit error from Claude's unified 5h/7d response headers. Only spent windows with future numeric resets contribute, and the latest spent window wins so a goal cannot wake while another cap still blocks it. Authentication and unknown errors do not read reset headers. `anthropic-provider-diagnostic.test.ts` exercises the real adapter against HTTP fixtures.
+
+## 2026-10-21 - reportedCount: absent, null or non-finite provider counts are not reported (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/utils/reported-count.ts` (fork-only): `reportedCount(value)` returns a finite number or undefined; the four adapters that parse a reasoning count use it.
+
+### Why
+
+- Gateways can send `"reasoning_tokens": null`; a `=== undefined` check let that through as `reasoning: null`, which compaction's retained-message check treats as invalid usage (review of senpi#3884).
+
+### Why an extension could not handle it
+
+- Usage parsing happens inside each adapter's stream.
+
+### Expected merge conflict zones
+
+- None: new file.
+
 ## 2026-10-18 - Anthropic compat gains supportsGzipRequestBody (senpi#3643)
 
 ### What changed

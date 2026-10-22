@@ -23,7 +23,8 @@ function optionalString(value: unknown): string | undefined | null {
 /**
  * Anthropic SDK `APIError`: reads `status`, the direct `type`, and the body's
  * nested `error.type` once each. Direct and nested tokens that disagree, or a
- * non-string token, yield nothing. Message, headers and request id are never read.
+ * non-string token, yield nothing. A classified usage limit may also carry its
+ * reset from Claude's unified headers. Message and request id are never read.
  */
 export function anthropicProviderDiagnosticFromError(error: unknown): ProviderDiagnostic | undefined {
 	try {
@@ -36,7 +37,16 @@ export function anthropicProviderDiagnosticFromError(error: unknown): ProviderDi
 		if (direct !== undefined && nested !== undefined && direct !== nested) return undefined;
 		const code = direct ?? nested;
 		if (code === undefined && (status === undefined || status === null)) return undefined;
-		return classifyProviderFailure({ status, code });
+		const diagnostic = classifyProviderFailure({ status, code });
+		if (diagnostic?.category !== "quota" && diagnostic?.category !== "rate_limit") return diagnostic;
+		const headers = Reflect.get(error, "headers");
+		if (!(headers instanceof Headers)) return diagnostic;
+		const resets = ["5h", "7d"].flatMap((window) => {
+			const utilization = Number(headers.get(`anthropic-ratelimit-unified-${window}-utilization`));
+			const reset = Number(headers.get(`anthropic-ratelimit-unified-${window}-reset`)) * 1000;
+			return utilization >= 1 && Number.isFinite(reset) && reset > Date.now() ? [reset] : [];
+		});
+		return resets.length === 0 ? diagnostic : { ...diagnostic, resetsAt: Math.max(...resets) };
 	} catch {
 		return undefined;
 	}

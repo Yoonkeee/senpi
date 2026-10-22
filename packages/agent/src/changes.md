@@ -1,3 +1,26 @@
+## 2026-10-21 - The agent loop stamps each response's timing (senpi#3879)
+
+### What changed
+
+- `packages/agent/src/agent-loop.ts`: `streamAssistantResponse` marks the request just before the stream function is called, feeds the provider's `start` and streamed delta events to a timing recorder, and stamps `timing` on the final message on every terminal path (the former `propagateThinkingTiming` is now `stampTiming`, which also stamps the thinking blocks as before). A failure before the request was issued gets no timing.
+- `packages/agent/src/response-timing.ts` (fork-only): the recorder, plus the exported `reasonedBeforeFirstDelta` / `STREAMED_DELTA_TYPES` rule that the TPS notice (`builtin/tps.ts`) also uses, so both measure one window. Wall-clock fields use `Date.now()`; `generationMs` uses the monotonic clock and the TPS notice's window (first delta to last delta, or from the response start when it reasoned before its first delta, senpi#3393).
+- `packages/agent/src/index.ts`: re-exports `response-timing.ts`.
+
+### Why
+
+- The final message is what the session persists and what `message_end`/`entry_appended` carry to RPC clients, so timing recorded there survives reloads and reaches the desktop turn stats line (desktop #3729).
+- `packages/agent/src/index.ts`: exports the generation-window rule so the TPS notice and the persisted timing share one implementation.
+
+### Why an extension could not handle it
+
+- Extensions see `message_update` events but cannot write a field onto the persisted final message before it is appended.
+- `packages/agent/src/index.ts`: the shared rule has to be importable by the coding-agent's TPS extension, which only reaches the package root.
+
+### Expected merge conflict zones
+
+- MEDIUM: `packages/agent/src/agent-loop.ts` `streamAssistantResponse`: the stream function call, the `start` case, the delta cases and the four terminal `stampTiming` calls.
+- LOW: `packages/agent/src/index.ts`, one `export *` line after `agent-loop.ts`.
+
 ## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
 
 ### What changed

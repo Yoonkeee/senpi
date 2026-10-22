@@ -12,6 +12,7 @@ import { registerWebViewBroker } from "../../core/webview/webview-broker.ts";
 import { createCliRuntimeFactory } from "../../main.ts";
 import { initTheme } from "../interactive/theme/theme.ts";
 import { buildRpcSessionState } from "./connection-handler.ts";
+import { ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import { isHandoffBusy } from "./handoff-activity.ts";
 import { createRpcSessionBinding, type RpcSessionBinding } from "./session-binding.ts";
 import { SessionEventWriter } from "./session-event-writer.ts";
@@ -95,6 +96,8 @@ class WorkerEventWriter extends SessionEventWriter {
 }
 
 const writer = new WorkerEventWriter();
+// One session per isolate: the roles of the connections it serves, adopted from the host before each command.
+const connectionRoles = new ConnectionRoles();
 let prepared: Extract<HostToSessionWorker, { type: "prepare" }> | undefined;
 let registry: RpcSessionRegistry | undefined;
 let entry: RpcSessionEntry | undefined;
@@ -171,10 +174,12 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 		}
 		case "bind": {
 			if (!entry || binding) throw new Error("Invalid session binding");
+			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const bindingEntry = entry;
 			const createBinding = () =>
 				createRpcSessionBinding(message.sessionId, bindingEntry, writer, () => send({ type: "request_close" }), {
 					capabilities: message.capabilities,
+					connectionRoles,
 					clientInfo: {
 						connectionId: () => writer.currentConnection(),
 						setCapabilities: (connection, capabilities) =>
@@ -205,6 +210,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 					String(message.command.type),
 				);
 			if (!binding || (closing && !privileged)) throw new Error("session_closing");
+			if (message.roles !== undefined) connectionRoles.adopt(roleConnection(message.connection), message.roles);
 			const activeBinding = binding;
 			await (message.connection === undefined
 				? activeBinding.handle(message.command)
@@ -237,6 +243,7 @@ async function handle(message: HostToSessionWorker): Promise<void> {
 			unsubscribe?.();
 			unsubscribeWake?.();
 			await binding?.dispose();
+			connectionRoles.clear();
 			if (entry?.runtime) {
 				const current = entry;
 				await runWithProviderScope(current.scope, async () => {

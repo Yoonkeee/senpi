@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Credential } from "@earendil-works/pi-ai";
+import { slotsOfOwnKind } from "@earendil-works/pi-ai/auth/pool/kinds";
 import { applyAccountOrder, rendezvousOrder } from "@earendil-works/pi-ai/auth/pool/select";
-import { accountLabel, listSlots, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
+import { accountLabel, type PooledCredential } from "@earendil-works/pi-ai/auth/pool/slots";
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
@@ -48,7 +49,8 @@ export function formatTokens(count: number): string {
  */
 export function accountFooterSuffix(credential: Credential | undefined, sessionId: string): string {
 	const pooled: PooledCredential | undefined = credential;
-	const slots = listSlots(credential);
+	// Only slots the credential can serve with; a mixed pool's other-kind slot never does (senpi#3486).
+	const slots = credential ? slotsOfOwnKind(credential) : [];
 	if (slots.length < 2) return "";
 	const pinned = Object.entries(credential ?? {}).find(([key]) => key === "pinned")?.[1];
 	const pinnedSlot = slots.find((slot) => slot.name === pinned);

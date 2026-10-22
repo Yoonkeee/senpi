@@ -1,3 +1,21 @@
+## 2026-10-21 - AssistantMessage.timing (senpi#3879)
+
+### What changed
+
+- `packages/ai/src/types.ts`: new `AssistantMessageTiming` (`requestedAt`, optional `firstTokenAt`/`lastTokenAt`, `endedAt`, optional `generationMs`, all milliseconds) and an optional `AssistantMessage.timing`.
+
+### Why
+
+- A reply's time to first token and generation rate were measured only live by the TPS notice and discarded; RPC clients (the desktop turn stats line, desktop #3729) and reloaded sessions had no record of them.
+
+### Why an extension could not handle it
+
+- The message type is the public `pi-ai` contract; an extension cannot add a persisted field to it.
+
+### Expected merge conflict zones
+
+- LOW: `AssistantMessage` in `packages/ai/src/types.ts`, next to `endTurn`/`timestamp`.
+
 ## 2026-10-21 - AssistantMessage.failureSource (senpi#3866)
 
 ### What changed

@@ -35,6 +35,8 @@ const preparedInputSchema = clientMessageIdentitySchema.extend({
 	images: z.array(z.object({ type: z.literal("image"), data: z.string(), mimeType: z.string() })).optional(),
 	mode: z.enum(["steer", "followUp"]),
 	enqueueOrder: z.number(),
+	// Additive: a record written before this field restores with no source (unknown origin).
+	source: z.enum(["interactive", "rpc", "extension"]).optional(),
 });
 
 export const clientAdmissionRecordSchema = z.discriminatedUnion("state", [

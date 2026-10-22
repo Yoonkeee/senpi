@@ -68,6 +68,7 @@ import { DURABLE_CLIENT_MESSAGE_ID_CAPABILITY } from "./client-admission-record.
 import { ClientAdmissions } from "./client-admissions.ts";
 import { handleClientInput } from "./client-input-handler.ts";
 import { ConnectionQuestionBridge, degradeQuestion, sessionQuestionBridges } from "./connection-question-bridge.ts";
+import { CONNECTION_ROLE_FIXED, ConnectionRoles, roleConnection } from "./connection-roles.ts";
 import {
 	AUTH_KEY_VERIFY_CAPABILITY,
 	AUTO_TITLE_SESSIONS_CAPABILITY,
@@ -147,6 +148,8 @@ export { buildRpcSessionState } from "./rpc-session-state.ts";
 export interface RpcConnectionOptions {
 	/** Client capability flags from the handshake (e.g. custom_unsupported opt-in). */
 	capabilities?: readonly string[];
+	/** The host's per-connection role registry; a single-connection process keeps its own. */
+	connectionRoles?: ConnectionRoles;
 	/** Called instead of requesting process shutdown for a session-owned binding. */
 	shutdownHandler?: () => void;
 	/** Session registries own runtime disposal themselves. */
@@ -325,6 +328,7 @@ export function createRpcConnectionHandler(
 	options: RpcConnectionOptions = {},
 ): RpcConnectionHandler {
 	let clientCapabilities = options.capabilities;
+	const connectionRoles = options.connectionRoles ?? new ConnectionRoles();
 	const routingSessionId = options.sessionId;
 	// True only while THIS connection's own command drives a replacement; the issuer
 	// already learns the new identity from its command response.
@@ -927,9 +931,12 @@ export function createRpcConnectionHandler(
 		const settled = new AbortController();
 		const loginSignal = AbortSignal.any([controller.signal, settled.signal]);
 		activeLogins.set(provider, controller);
+		const authStorage = session.modelRegistry.authStorage;
+		// A replacement left by an earlier login is not this login's; drop it so it is never reported here.
+		authStorage.takeReplacement(provider);
 
 		try {
-			await session.modelRegistry.authStorage.login(provider as OAuthProviderId, {
+			await authStorage.login(provider as OAuthProviderId, {
 				onAuth: (info) => {
 					outputEvent({ type: "auth_login_url", provider, url: info.url });
 				},
@@ -942,7 +949,9 @@ export function createRpcConnectionHandler(
 			});
 			session.modelRegistry.refresh();
 			if (provider === ANTHROPIC_SUBSCRIPTION_PROVIDER_ID) emitProviderAccountsChanged(provider);
-			outputEvent({ type: "auth_login_end", provider, success: true });
+			// The client shows what this login replaced and where the previous credential is (senpi#3486).
+			const replacement = authStorage.takeReplacement(provider);
+			outputEvent({ type: "auth_login_end", provider, success: true, ...replacement });
 		} catch (loginError: unknown) {
 			const message = loginError instanceof Error ? loginError.message : String(loginError);
 			outputEvent({ type: "auth_login_end", provider, success: false, error: message });
@@ -1189,6 +1198,10 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "set_client_info":
+				if (command.capabilities !== undefined) {
+					if (!connectionRoles.declare(roleConnection(options.clientInfo?.connectionId()), command.capabilities))
+						return error(id, "set_client_info", CONNECTION_ROLE_FIXED);
+				}
 				if (options.clientInfo && command.capabilities !== undefined) {
 					clientCapabilities = command.capabilities;
 					options.clientInfo.setCapabilities(options.clientInfo.connectionId(), command.capabilities);
@@ -1807,11 +1820,16 @@ export function createRpcConnectionHandler(
 			}
 
 			case "login_api_key": {
-				session.modelRegistry.authStorage.set(command.provider, { type: "api_key", key: command.key });
+				const replacement = session.modelRegistry.authStorage.set(command.provider, {
+					type: "api_key",
+					key: command.key,
+				});
 				// Answer after the registry sees the key: a client re-reading auth status on this
 				// response must not get the pre-login snapshot (#2384).
 				await session.modelRegistry.refresh();
-				return success(id, "login_api_key");
+				// The client shows what this key replaced and where the previous login is (senpi#3448).
+				session.modelRegistry.authStorage.takeReplacement(command.provider);
+				return success(id, "login_api_key", replacement);
 			}
 
 			case "verify_api_key": {

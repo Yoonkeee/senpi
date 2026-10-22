@@ -32,6 +32,7 @@ import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { EventLoopSlicer, mapInSlices } from "./event-loop-slicer.ts";
 import { projectRetainedMessages } from "./extensions/builtin/compaction/retained-message-projection.ts";
 import { resolveMovedPath } from "./extensions/builtin/moved-path-guard/resolve.ts";
+import type { InputSource } from "./extensions/types.ts";
 import type { ModelChangeOrigin, ModelChangeSource } from "./model-change-origin.ts";
 import { sessionCwdMatcher } from "./moved-session-cwd.ts";
 import type { RepositoryIdentity } from "./repository-identity.ts";
@@ -198,6 +199,12 @@ export interface SessionEntryBase {
 export interface SessionMessageEntry extends SessionEntryBase {
 	type: "message";
 	message: AgentMessage;
+	/**
+	 * Where a user message came from: the `source` its `input` event reported. Stored on the entry, never on
+	 * the message, so it stays in the session record and out of provider requests. Absent on every other
+	 * entry and on user input that ran no `input` event (restored, moved or edited input): unknown origin.
+	 */
+	inputSource?: InputSource;
 }
 
 export interface ThinkingLevelChangeEntry extends SessionEntryBase {
@@ -1858,17 +1865,25 @@ export class SessionManager {
 	 * instead of a full JSON copy (see `_shareMessage` for when it falls back). `appendMessage` keeps the
 	 * full copy: a caller may still change its object after appending.
 	 */
-	appendOwnedMessage(message: Message | CustomMessage | BashExecutionMessage): string {
-		return this._appendMessage(message, true);
+	appendOwnedMessage(
+		message: Message | CustomMessage | BashExecutionMessage,
+		options?: { readonly inputSource?: InputSource | undefined },
+	): string {
+		return this._appendMessage(message, true, options?.inputSource);
 	}
 
-	private _appendMessage(message: Message | CustomMessage | BashExecutionMessage, owned: boolean): string {
+	private _appendMessage(
+		message: Message | CustomMessage | BashExecutionMessage,
+		owned: boolean,
+		inputSource?: InputSource,
+	): string {
 		const entry: SessionMessageEntry = {
 			type: "message",
 			id: generateId(this.idsInUse),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 			message,
+			...(inputSource === undefined ? {} : { inputSource }),
 		};
 		this._appendEntry(entry, owned ? message : undefined);
 		const order = this.entryOrdersById.get(entry.id);
