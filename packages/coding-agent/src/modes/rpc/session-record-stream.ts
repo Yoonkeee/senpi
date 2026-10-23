@@ -21,6 +21,12 @@ export function subscribeSessionRecords(
 ): () => void {
 	const correlatedEvents = new ClientMessageEvents(output, () => ClientAdmissions.forSession(session).hasIdentities);
 	return session.subscribe((event) => {
+		if (event.type === "session_lifecycle") {
+			// The connection adds the routing handle; classic stdio has no envelope.
+			const { sessionId: _sessionId, ...record } = event;
+			output(record);
+			return;
+		}
 		if (event.type === "skill_invocation") {
 			correlatedEvents.accept(event satisfies RpcSkillInvocationEvent);
 			return;

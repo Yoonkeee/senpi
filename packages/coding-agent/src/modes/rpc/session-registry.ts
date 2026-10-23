@@ -209,7 +209,10 @@ export class RpcSessionRegistry {
 		claimSettled?.();
 		this.options.onSizeChange?.(this.entries.size);
 		try {
-			const newSessionOptions = requestedDurableId !== undefined ? { id: requestedDurableId } : undefined;
+			const newSessionOptions = {
+				...(requestedDurableId !== undefined ? { id: requestedDurableId } : {}),
+				...(storedProfile.spawnedBy ? { spawnedBy: storedProfile.spawnedBy } : {}),
+			};
 			const manager = sessionPath
 				? this.options.sessionFileLoad === "blocking"
 					? SessionManager.open(sessionPath, undefined, storedProfile.cwd, newSessionOptions)

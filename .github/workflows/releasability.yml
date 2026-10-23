@@ -89,9 +89,11 @@ jobs:
         run: npm ci --ignore-scripts
 
       # Same invocation scripts/release.mjs and scripts/local-release.mjs use.
-      # Needs network: the generator queries provider model APIs with --strict.
+      # Needs network: the generator queries provider model APIs with --strict. Like the release, it keeps
+      # the committed OpenGateway catalog on a feed break (a warning annotation); the OpenGateway catalog
+      # refresh workflow is the job that fails on it (senpi#4067).
       - name: Regenerate model catalog
-        run: npm --prefix packages/ai run generate-models
+        run: npm --prefix packages/ai run generate-models -- --keep-last-good-opengateway
 
       # #698: regeneration removed a model and the drift only surfaced at release time. Drift is
       # recorded here and reported as an advisory warning after the checks below, which run on the

@@ -5,8 +5,10 @@ name: OpenGateway catalog refresh
 # catalog changed it opens (or updates) one refresh PR with a per-model summary
 # and a CHANGELOG entry. It fails loudly when the gateway cannot be read, and when
 # a refresh PR has waited longer than MAX_STALE_DAYS, so a stale shipped catalog
-# is visible instead of silent. Pull requests that touch the pipeline run the
-# regeneration and summary in dry-run mode.
+# is visible instead of silent. Release regeneration keeps the committed catalog on
+# a feed break (--keep-last-good-opengateway); this workflow is the alarm
+# (senpi#4067). Pull requests that touch the pipeline run the regeneration and
+# summary in dry-run mode.
 
 on:
   schedule:

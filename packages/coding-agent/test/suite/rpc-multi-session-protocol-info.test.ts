@@ -23,6 +23,7 @@ describe("multi-session RPC protocol info", () => {
 				serverVersion: VERSION,
 				capabilities: [
 					"multi_session",
+					"session_lifecycle",
 					"expected_host_instance",
 					"auto_title_sessions",
 					"media_placeholders",

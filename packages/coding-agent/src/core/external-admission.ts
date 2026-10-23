@@ -65,6 +65,10 @@ export class ExternalAdmission {
 		return this.turnEpochValue;
 	}
 
+	get hasInputWork(): boolean {
+		return this.inputHolds.size > 0;
+	}
+
 	/** Called when an agent run begins; a steer names the epoch it was meant for. */
 	beginTurn(): void {
 		this.turnEpochValue += 1;

@@ -460,9 +460,10 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Preview the messages selected for the next turn without consuming them. */
-	peekQueuedMessages(): AgentMessage[] {
+	/** Preview next-turn messages, or both queues with { all: true }, without consuming them. */
+	peekQueuedMessages(options?: { all?: boolean }): AgentMessage[] {
 		const steering = this.steeringQueue.peek();
+		if (options?.all) return [...steering, ...this.followUpQueue.peek()];
 		return steering.length > 0 ? steering : this.followUpQueue.peek();
 	}
 

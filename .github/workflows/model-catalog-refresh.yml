@@ -56,10 +56,12 @@ jobs:
         run: npm ci --ignore-scripts
 
       # --strict (the package script's default): a models.dev or provider-listing outage fails
-      # this run instead of silently keeping yesterday's catalog.
+      # this run instead of silently keeping yesterday's catalog. OpenGateway is the exception: its
+      # outage keeps the committed catalog (a warning annotation) so the other providers still refresh;
+      # opengateway-catalog-refresh.yml is the job that fails on it (senpi#4067).
       - name: Regenerate the model catalog
         working-directory: packages/ai
-        run: npx tsx scripts/generate-models.ts --strict
+        run: npx tsx scripts/generate-models.ts --strict --keep-last-good-opengateway
 
       - name: Validate model data
         working-directory: packages/ai

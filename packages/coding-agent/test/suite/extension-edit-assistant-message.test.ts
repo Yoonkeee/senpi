@@ -80,4 +80,17 @@ describe("pi.editAssistantMessage (extension API)", () => {
 		if (!leafEntry || !isAssistantEntry(leafEntry)) throw new Error("leaf should be the edited assistant entry");
 		expect(getMessageText(leafEntry.message)).toBe("The answer is 42.");
 	});
+
+	it("refuses a captured leaf when ordinary custom work follows it", async () => {
+		const { harness } = await createBoundHarness();
+		const [a1] = harness.sessionManager.getEntries().filter(isAssistantEntry);
+		const expectedLeafId = harness.sessionManager.getLeafId();
+		if (!a1 || !expectedLeafId) throw new Error("expected an assistant entry and leaf");
+		harness.sessionManager.appendCustomEntry("extension-note", { value: 1 });
+		harness.sessionManager.appendCustomEntry("session-lifecycle", { seq: 100 });
+
+		await expect(
+			harness.session.editAssistantMessage(a1.id, "The answer is 42.", { expectedLeafId }),
+		).rejects.toMatchObject({ code: "stale_leaf" });
+	});
 });

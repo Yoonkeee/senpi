@@ -36,6 +36,7 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 		paused: session.paused ?? false,
 		pausedNoticeCount: session.pausedNoticeCount ?? 0,
 		holds: session.holds ?? [],
+		lifecycle: session.lifecycle,
 		pendingQuestions: sessionQuestionBridges.get(session)?.pendingQuestions(),
 		pendingDialogs: sessionDialogRequests.get(session)?.snapshot() ?? [],
 		model: session.model,
@@ -47,6 +48,10 @@ export function buildRpcSessionState(session: AgentSession, lastAbortSource?: Ag
 			: null,
 		thinkingLevel: session.thinkingLevel,
 		...(session.thinkingSelection ? { thinkingSelection: session.thinkingSelection } : {}),
+		...(session.thinkingLevelSource === undefined ? {} : { thinkingLevelSource: session.thinkingLevelSource }),
+		...(typeof session.getSessionModelThinkingLevels === "function"
+			? { sessionModelThinkingLevels: session.getSessionModelThinkingLevels() }
+			: {}),
 		...(lastAbortSource ? { lastAbortSource } : {}),
 		...(lastProviderDiagnostic ? { lastProviderDiagnostic } : {}),
 		serviceTier: session.effectiveServiceTier,

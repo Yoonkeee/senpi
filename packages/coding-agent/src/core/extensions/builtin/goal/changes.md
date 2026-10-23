@@ -31,6 +31,24 @@ The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `
 
 - `turn-end-liveness.ts`: `heldReason`.
 
+## 2026-10-21 - Share live continuation facts with lifecycle (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts` registers a session-owned live fact collector in `lifecycle-facts.ts`, using the existing exported `collectTurnEndLivenessInput`. The collector reads the real continuation latch, timers, recovery and goal; it retires with the extension. Goal refresh synchronously reports status transitions so an intervening close cannot be lost to an asynchronous reread. Restore supplies the durable last turn's end kind while the same collector reconstructs current live wake facts.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: lifecycle must read the facts after settlement and restoration, not retain a stale per-turn verdict or duplicate the continuation policy.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: these timers and latches belong to this builtin and have no external mutation surface.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/goal/index.ts`: session_start, agent_start, agent_end and shutdown handlers. Preserve #3865's verdict/reporting path unchanged.
+
 ## 2026-10-21 - Turn-end liveness verdict (#3863)
 
 ### What changed

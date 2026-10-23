@@ -462,6 +462,7 @@ interface UsageAccumulator {
 	cacheRead: number;
 	cacheWrite: number;
 	totalCost: number;
+	totalCostUnknown?: true;
 	lastAssistantId: number;
 	lastCacheHitRate?: number;
 }
@@ -500,6 +501,7 @@ function accumulateUsage(accumulator: UsageAccumulator, entry: Entry): void {
 		accumulator.cacheRead += usage.cacheRead;
 		accumulator.cacheWrite += usage.cacheWrite;
 		accumulator.totalCost += usage.cost.total;
+		if (usage.costUnknown) accumulator.totalCostUnknown = true;
 	}
 	if (
 		assistant &&
@@ -542,6 +544,7 @@ function usageView(
 		cacheRead: cumulative.cacheRead,
 		cacheWrite: cumulative.cacheWrite,
 		totalCost: cumulative.totalCost,
+		...(cumulative.totalCostUnknown ? { totalCostUnknown: true as const } : {}),
 		...(cumulative.lastCacheHitRate === undefined ? {} : { lastCacheHitRate: cumulative.lastCacheHitRate }),
 		contextTokens,
 		contextWindow,

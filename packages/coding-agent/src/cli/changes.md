@@ -906,6 +906,26 @@ CLI argument semantics live in the executable entry, below any extension hook.
 ### Expected merge conflict zones
 
 Upstream edits to cli/args.ts at the next sync.
+## 2026-10-16 - First-turn prompt size inspection (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/cli/args.ts`: parse and document `--print-prompt-sizes`.
+- Contract: zero model calls. Only two built-in `session_start` effects are skipped: MCP attach (configured servers are listed by name/count as "not attached; tool sizes exclude them", never sized) and the cache-keepalive prewarm. Every other handler runs, so hooks, loop and image-generation state match a normal first turn. Third-party `session_start` hooks still run; the report names them with a warning that they ran and may have used the network. The help line states this boundary.
+- `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind a normal session, request a sizes-only prefix preview, emit JSON and exit. Missing models and skipped previews exit nonzero with a reason. Prompt and tool content never enter the output.
+- `packages/coding-agent/src/cli/print-prompt-sizes.ts`: bind with the explicit sizes-only startup signal; other session starts keep their existing behavior.
+
+### Why
+
+Users need to see which first-turn components consume their input budget without publishing their instructions.
+
+### Why an extension could not handle it
+
+The diagnostic must select an offline, non-streaming CLI route before normal mode dispatch and stdin consumption.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/cli/args.ts`: Args, the flag parser and help template.
 ## 2026-10-20 - Bind an operator stop to its confirmed generation (omo-desktop-app#3561)
 
 ### What changed

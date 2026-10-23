@@ -23,6 +23,7 @@ import type { ContextUsage, SessionControlAdmission, SessionKind } from "../../c
 import type { ResolvedMessagePath } from "../../core/message-path-resolution.ts";
 import type { PendingInputSnapshot, PendingInputUpdate } from "../../core/pending-input-session.ts";
 import type { SessionEntry, SessionMessageEntry, SessionTreeNode, UsageTotals } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 import type { ToolBarrierSpec } from "../../core/tool-barrier.ts";
 import type { ApiKeyVerification } from "../../core/verify-api-key.ts";
@@ -185,6 +186,7 @@ type RpcSessionCommand =
 
 	// State
 	| { id?: string; type: "get_state" }
+	| { id?: string; type: "request_self_settle" }
 	/**
 	 * The newest receipt of one effect (capability `effect_ledger`). With `sessionId` it answers from the
 	 * loaded session; with `sessionPath` (and no `sessionId`) from that transcript on disk, searching the
@@ -209,6 +211,7 @@ type RpcSessionCommand =
 	| { id?: string; type: "set_thinking_level"; level: ThinkingLevel; scope?: "turn"; effectId?: string }
 	| { id?: string; type: "cycle_thinking_level" }
 	| { id?: string; type: "get_available_thinking_levels" }
+	| { id?: string; type: "get_model_thinking_level"; provider: string; modelId: string }
 
 	// Fast mode (ChatGPT Subscription priority service tier)
 	| { id?: string; type: "set_fast_mode"; enabled: boolean }
@@ -557,6 +560,7 @@ export type RpcCommand =
 			type: "open_session";
 			/** An observational/unattended open; attaching never releases an existing hold. */
 			attended?: false;
+			spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 			/**
 			 * Attach only to an existing session on this host generation. Requires
 			 * `expected_host_instance`; mismatch returns `owner_changed`, a released
@@ -845,6 +849,7 @@ export interface RpcSessionState {
 	paused: boolean;
 	pausedNoticeCount: number;
 	holds: { kind: HoldKind; key: string; since: string; data?: unknown; sourceCounts: Record<string, number> }[];
+	lifecycle: import("../../core/session-lifecycle-types.ts").SessionLifecycle;
 	model?: Model<any>;
 	/**
 	 * Model switch held until the next compaction, or `null` when no switch is held.
@@ -858,6 +863,16 @@ export interface RpcSessionState {
 	 * from "high is simply the effective level" without it.
 	 */
 	thinkingSelection?: ThinkingSelection;
+	/**
+	 * Where `thinkingLevel` came from (senpi#3819): a direct request, this session's or the global
+	 * last level for the model, a default, a fallback, or a clamp. Absent on older hosts.
+	 */
+	thinkingLevelSource?: ThinkingLevelSource;
+	/**
+	 * This session's last thinking level per model, keyed `provider/id` (senpi#3819). A model switch
+	 * restores from it, so clients read it instead of keeping a copy. Absent on older hosts.
+	 */
+	sessionModelThinkingLevels?: Record<string, ThinkingLevel>;
 	/**
 	 * Abort owner of the most recent aborted turn, or the in-flight one while it is
 	 * still settling. Retained after settle: the live session getter is transient, so a
@@ -1196,6 +1211,13 @@ export type RpcResponse =
 
 	// State
 	| { id?: string; type: "response"; command: "get_state"; success: true; data: RpcSessionState }
+	| {
+			id?: string;
+			type: "response";
+			command: "request_self_settle";
+			success: true;
+			data: import("../../core/session-lifecycle-types.ts").SelfSettleResult;
+	  }
 
 	// Model
 	| {
@@ -1265,6 +1287,13 @@ export type RpcResponse =
 			command: "get_available_thinking_levels";
 			success: true;
 			data: { levels: ThinkingLevel[] };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_model_thinking_level";
+			success: true;
+			data: { level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] };
 	  }
 
 	// Fast mode
@@ -1596,6 +1625,12 @@ export type RpcExtensionUIRequest =
 			method: "setStatus";
 			statusKey: string;
 			statusText: string | undefined;
+	  }
+	| {
+			type: "extension_ui_request";
+			id: string;
+			method: "setSubagentCost";
+			costUsd: number | undefined;
 	  }
 	| {
 			type: "extension_ui_request";

@@ -1246,6 +1246,15 @@ export function hasApi<TApi extends Api>(model: AnyModel, api: TApi): model is M
 }
 
 export function calculateCost(model: AnyModel, usage: Usage, atMs: number = Date.now()): Usage["cost"] {
+	if (model.cost.unknown) {
+		usage.cost.input = 0;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+		usage.cost.total = 0;
+		usage.costUnknown = true;
+		return usage.cost;
+	}
 	const inputTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 	const card = costCardAt(model.cost, atMs);
 	let rates: ModelCostRates = card;

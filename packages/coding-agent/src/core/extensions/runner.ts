@@ -11,6 +11,7 @@ import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
 import type { DiscoveredResourceEntry } from "../discovered-resource-scope.ts";
+import type { DynamicSystemPromptPart } from "../dynamic-prompt/build.ts";
 import { createEventBus, type EventBus, EXTENSION_RPC_EVENT_CHANNEL, type ExtensionRpcEvent } from "../event-bus.ts";
 import type { InputOrigin } from "../input-origin.ts";
 import type { KeybindingsConfig } from "../keybindings.ts";
@@ -473,6 +474,7 @@ const noOpUIContext: ExtensionUIContext = {
 	notify: () => {},
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
+	setSubagentCost: () => {},
 	setWorkingMessage: () => {},
 	setWorkingVisible: () => {},
 	setWorkingIndicator: () => {},
@@ -607,7 +609,8 @@ export class ExtensionRunner {
 	private toolHookLifecycleObserver: ExtensionToolHookLifecycleObserver | undefined;
 	private nextToolHookRunIndex = 0;
 	private uiPromptDepth = 0;
-	private activeUIPrompt: { kind: UIPromptKind; title?: string } | undefined;
+	private activeUIPrompt: { kind: UIPromptKind; title?: string; requestId: string; since: string } | undefined;
+	private lifecycleAttentionObserver: (() => void) | undefined;
 
 	constructor(
 		extensions: Extension[],
@@ -639,6 +642,7 @@ export class ExtensionRunner {
 		},
 	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
+		if (actions.lifecycle) this.runtime.lifecycle = actions.lifecycle;
 		this.runtime.sendMessage = (message, options) => {
 			if (options?.triggerTurn === true) this.sessionStartTurns.admit(() => actions.sendMessage(message, options));
 			else actions.sendMessage(message, options);
@@ -863,6 +867,21 @@ export class ExtensionRunner {
 		this.toolHookLifecycleObserver = observer;
 	}
 
+	setLifecycleAttentionObserver(observer: () => void): void {
+		this.lifecycleAttentionObserver = observer;
+	}
+
+	getLifecycleHumanWait(): Omit<import("../session-lifecycle-types.ts").HumanWait, "originSessionId"> | undefined {
+		const prompt = this.activeUIPrompt;
+		if (this.mode === "rpc" || !prompt) return undefined;
+		return {
+			kind: prompt.kind === "confirm" ? "approval" : "question",
+			requestId: prompt.requestId,
+			revision: 1,
+			since: prompt.since,
+		};
+	}
+
 	private wrapUIPromptContext(ui: ExtensionUIContext): ExtensionUIContext {
 		const questionFn = ui.question;
 		return {
@@ -876,16 +895,27 @@ export class ExtensionRunner {
 			...(questionFn
 				? {
 						question: (request, opts) =>
-							this.withUIPrompt("question", request.questions[0]?.header, () => questionFn(request, opts)),
+							this.withUIPrompt(
+								"question",
+								request.questions[0]?.header,
+								() => questionFn(request, opts),
+								request.requestId,
+							),
 					}
 				: {}),
 		};
 	}
 
-	private withUIPrompt<T>(kind: UIPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+	private withUIPrompt<T>(
+		kind: UIPromptKind,
+		title: string | undefined,
+		run: () => Promise<T>,
+		requestId: string = crypto.randomUUID(),
+	): Promise<T> {
 		const outerPrompt = this.uiPromptDepth++ === 0;
 		if (outerPrompt) {
-			this.activeUIPrompt = { kind, title };
+			this.activeUIPrompt = { kind, title, requestId, since: new Date().toISOString() };
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({ type: "ui_prompt_start", reason: "ui_prompt", kind, ...(title ? { title } : {}) });
 		}
 		const finish = () => {
@@ -893,6 +923,7 @@ export class ExtensionRunner {
 			this.uiPromptDepth = 0;
 			const prompt = this.activeUIPrompt ?? { kind, title };
 			this.activeUIPrompt = undefined;
+			this.lifecycleAttentionObserver?.();
 			this.emitUIPromptEvent({
 				type: "ui_prompt_end",
 				reason: "ui_prompt",
@@ -2366,6 +2397,13 @@ export class ExtensionRunner {
 		return headers;
 	}
 
+	/** Use the loader's provenance, including bundled modules and generated global-default shims. */
+	getThirdPartySessionStartPaths(): string[] {
+		return this.extensions
+			.filter((ext) => ext.sourceInfo.source !== "builtin" && (ext.handlers.get("session_start")?.length ?? 0) > 0)
+			.map((ext) => ext.path);
+	}
+
 	/** Paths of extensions with a `before_agent_start` handler not registered `{ previewSafe: true }`. */
 	getPreviewUnsafeBeforeAgentStartPaths(): string[] {
 		const paths: string[] = [];
@@ -2385,6 +2423,13 @@ export class ExtensionRunner {
 			readonly preview?: boolean;
 			readonly signal?: AbortSignal;
 			readonly trigger?: BeforeAgentStartEvent["trigger"];
+			/** Internal size accounting; observes only preview composition, never real turns. */
+			readonly observePrompt?: (contribution: {
+				readonly path: string;
+				readonly before: string;
+				readonly after: string;
+				readonly parts?: readonly DynamicSystemPromptPart[];
+			}) => void;
 		} = {},
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
 		let currentSystemPrompt = systemPrompt;
@@ -2416,7 +2461,9 @@ export class ExtensionRunner {
 						systemPromptOptions,
 						...(options.preview === true ? { preview: true } : {}),
 					};
+					const promptBefore = currentSystemPrompt;
 					const handlerResult = await handler(event, ctx);
+					let parts: readonly DynamicSystemPromptPart[] | undefined;
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -2426,7 +2473,16 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							parts = result.systemPromptParts;
 						}
+					}
+					if (options.preview === true) {
+						options.observePrompt?.({
+							path: ext.path,
+							before: promptBefore,
+							after: currentSystemPrompt,
+							...(parts === undefined ? {} : { parts }),
+						});
 					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);

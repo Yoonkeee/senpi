@@ -39,6 +39,7 @@ export interface CreateAgentSessionRuntimeResult extends CreateAgentSessionResul
 /** Immutable flags selected when a runtime is first launched. */
 export interface AgentSessionLaunchProfile {
 	cwd: string;
+	spawnedBy?: import("./session-lifecycle-types.ts").SpawnedBy;
 	/** Host-owned public endpoint evidence; never sourced from client session context. */
 	holderEndpoint?: SessionHolderEndpoint;
 	permissionPreset?: string;

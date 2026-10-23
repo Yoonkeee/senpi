@@ -25,7 +25,12 @@ import {
 } from "./session-registry.ts";
 import { releaseWithinGrace } from "./session-teardown.ts";
 import { SessionWorkerClient } from "./session-worker-client.ts";
-import { SESSION_WORKER_LIMITS, type SessionWriteGrant, typedWorkerRefusal } from "./session-worker-protocol.ts";
+import {
+	closedByWorkerDeath,
+	SESSION_WORKER_LIMITS,
+	type SessionWriteGrant,
+	typedWorkerRefusal,
+} from "./session-worker-protocol.ts";
 import { WorkerSessionClaims } from "./worker-session-claims.ts";
 
 type SessionWorkerCallbacks = ConstructorParameters<typeof SessionWorkerClient>[0];
@@ -183,6 +188,12 @@ export class WorkerSessionRegistry {
 		} catch (cause) {
 			entry.state = "quarantined";
 			worker.quarantine();
+			// A worker that dies before commit (for example one that cannot load its modules) closes what the open
+			// is still waiting on: its own request channel rejects the pending prepare with a plain
+			// `session_closing` / `session_worker_exited`, and the claims and grants report `session_closing`.
+			// Name why the worker died instead, as the commit check above does (#4037, #1953).
+			if (workerFailure !== undefined && closedByWorkerDeath(cause))
+				throw new RpcSessionRegistryError("open_failed", workerFailure.replace(/^open_failed: /, ""));
 			throw cause;
 		}
 	}

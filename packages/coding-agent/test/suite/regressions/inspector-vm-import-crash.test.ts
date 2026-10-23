@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import { isRecoverableInspectorVmImportError } from "../../../src/inspector-policy.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
 
 type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
 
@@ -80,7 +81,8 @@ function runUntilClose(args: readonly string[], env: NodeJS.ProcessEnv): Promise
 	onTestFinished(() => {
 		if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
 		if (process.platform === "win32") {
-			spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+			const args = windowsTreeKillArgs(child.pid);
+			if (args.length > 0) spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 			return;
 		}
 		try {

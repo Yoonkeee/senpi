@@ -18,6 +18,7 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"get_follow_up_messages",
 	"get_available_models",
 	"get_available_thinking_levels",
+	"get_model_thinking_level",
 	"get_fast_mode",
 	"get_session_stats",
 	"resolve_path",

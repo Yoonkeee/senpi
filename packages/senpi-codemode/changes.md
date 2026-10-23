@@ -1,5 +1,21 @@
 # senpi-codemode fork changes
 
+## 2026-10-23 - The gate records its baseline on Linux only
+
+### What changed
+
+- `packages/senpi-codemode/scripts/gate-baseline-review.ts`: `baselineHostRefusal(platform)` returns a refusal for every host except Linux.
+- `packages/senpi-codemode/scripts/gate-eval.ts`: `--write-baseline` on another host adds that refusal as a gate failure, so `test/gate/baseline.json` is never written there; the re-record hint now says "on Linux".
+- `packages/senpi-codemode/test/gate/baseline-review.test.ts`: Linux is allowed; macOS and Windows are refused with the reason.
+
+### Why
+
+- The gate runs on the Linux CI image. A baseline recorded on macOS or Windows carries that host's import sizes and OS-specific contract outcomes, so every later Linux run would report drift that never happened.
+
+### Expected merge conflict zones
+
+- The end of `gate-eval.ts` `main()` (report and baseline writes). Measurement and comparison are unchanged.
+
 ## 2026-10-15 - Write Julia startup frames pre-encoded (Fixes senpi#3048)
 
 ### What changed

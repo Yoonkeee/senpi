@@ -907,6 +907,8 @@ export interface InteractiveModeOptions {
 }
 
 type QuestionOverlayOptions = ExtensionUIDialogOptions & {
+	/** A `user-message` answer is reported by its own delivery, so the overlay must not report it again. */
+	deliver?: "tool-result" | "user-message";
 	onProgress?: (draft: QuestionDraft) => void;
 	getDeadlineAtMs?: () => number;
 	initialDraft?: QuestionDraft;
@@ -3718,6 +3720,10 @@ export class InteractiveMode {
 			notify: (message, type) => this.showExtensionNotify(message, type),
 			onTerminalInput: (handler) => this.addExtensionTerminalInputListener(handler),
 			setStatus: (key, text) => this.setExtensionStatus(key, text),
+			setSubagentCost: (costUsd) => {
+				this.footerDataProvider.setSubagentCost(costUsd);
+				this.ui.requestRender();
+			},
 			setWorkingMessage: (message) => {
 				this.workingMessage = message;
 				this.updateWorkingIndicatorMessage();
@@ -3794,6 +3800,7 @@ export class InteractiveMode {
 				title,
 				options,
 				(option) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionSelector();
 					resolve(option);
@@ -3874,6 +3881,7 @@ export class InteractiveMode {
 				title,
 				placeholder,
 				(value) => {
+					this.session.admitHumanAnswer();
 					opts?.signal?.removeEventListener("abort", onAbort);
 					this.hideExtensionInput();
 					resolve(value);
@@ -3917,6 +3925,7 @@ export class InteractiveMode {
 				title,
 				prefill,
 				(value) => {
+					this.session.admitHumanAnswer();
 					this.hideExtensionEditor();
 					resolve(value);
 				},
@@ -3956,6 +3965,8 @@ export class InteractiveMode {
 			const previousWorkingMessage = this.workingMessage;
 			const finish = (response: QuestionResponse) => {
 				if (settled) return;
+				if (request.waitForAnswer && opts?.deliver !== "user-message" && response.resolvedBy === "local_ui")
+					this.session.admitHumanAnswer();
 				settled = true;
 				opts?.signal?.removeEventListener("abort", onAbort);
 				this.workingMessage = previousWorkingMessage;
@@ -9893,11 +9904,11 @@ export class InteractiveMode {
 
 			if (stats.cost > 0 || cacheWaste.missedTokens > 0) {
 				info += `\n${theme.bold("Cost")}\n`;
-				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}`;
+				info += `${theme.fg("dim", "Total:")} $${stats.cost.toFixed(3)}${stats.costUnknown ? theme.fg("dim", " + unpriced turns") : ""}`;
 				// A single entry repeats the total, unless it names a model other than the selected one.
 				if (usageBreakdown.length > 1 || usageBreakdown[0]?.key !== selectedModelKey) {
 					for (const entry of usageBreakdown) {
-						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
+						info += `\n  ${theme.fg("dim", `${entry.key}:`)} $${entry.cost.toFixed(3)}${entry.costUnknown ? theme.fg("dim", " + unpriced turns") : ""} ${theme.fg("dim", `(${formatTokens(entry.tokens)} tokens)`)}`;
 					}
 				}
 				if (cacheWaste.missedTokens > 0) {

@@ -218,7 +218,7 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `samplingParams` | No | omitted | Sampling parameters merged verbatim into every request body (see below) |
 | `inputLimits` | No | omitted | Image resize profile and request limits (see [Image Input Limits](#image-input-limits)) |
-| `cost` | No | all zeros | Per-million-token rates with optional request-wide input pricing tiers |
+| `cost` | No | the built-in model's price, else unknown | Per-million-token rates with optional request-wide input pricing tiers. An entry whose `id` matches a built-in model of the same provider keeps that model's price when it omits `cost`. A model with no price anywhere has an unknown cost: its turns report `costUnknown` instead of `$0`. A local `ollama` model is the exception: an omitted `cost` is a real `0`. A `modelOverrides` `cost` on an unknown-priced model keeps it unknown until the override sets all four rates. |
 | `recoverTextToolCalls` | No | Claude ID default | Enables or disables recovery of leaked Claude XML tool calls from streamed assistant text. This is a top-level model field, not a `compat` field. |
 | `compat` | No | provider `compat` | Provider compatibility overrides. Merged with provider-level `compat` when both are set. |
 
@@ -540,7 +540,7 @@ Behavior notes:
 - `whitelist` and `blacklist` match whole model ids exactly and case-sensitively; there are no globs. When both are set, a model must be in `whitelist` and not in `blacklist`.
 - All three provider filters run after custom `models` are merged in, and before `modelOverrides`. They also apply to the provider's custom `models` entries.
 - `hideFreeModels` is per provider. Other providers are unaffected, so a local provider whose models cost `0` (Ollama, LM Studio, vLLM) stays listed unless that provider sets the flag itself.
-- `hideFreeModels` also hides a custom `models` entry that omits `cost`, because an omitted `cost` is `0`. Give such a model a nonzero `cost`, or leave the flag off for that provider.
+- `hideFreeModels` does not hide a custom `models` entry whose price is unknown (no `cost` and no matching built-in model): an unknown price is not a free one. An entry that sets `cost` to all zeros is free and is hidden.
 - `hideFreeModels` reads the catalog `cost` (or the custom model's own `cost`). A `cost` set in `modelOverrides` is not considered.
 - A provider block that sets only `whitelist`, `blacklist`, or `hideFreeModels` is valid; no `baseUrl` or `models` is needed.
 

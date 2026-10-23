@@ -115,6 +115,60 @@ a runtime. Worker-runtime sessions currently do not dispatch the extension hooks
 
 The shared Unix socket host keeps its ownership state in a PER-SOCKET daemon directory, `<agentDir>/rpc-host-daemon/<sha256(canonical socket)[:16]>/` (see [Daemon state directory](#daemon-state-directory-layout-2)). Clients attach to a compatible existing host regardless of which client surface started it; only incompatible unmanaged owners are refused.
 
+## Session lifecycle
+
+The `session_lifecycle` capability advertises one engine-owned root-work state.
+`get_state.lifecycle` returns it; `{ type: "session_lifecycle", sessionId, lifecycle }`
+publishes changes on the ordered session stream. Shared hosts broadcast the event
+to observers and replay only the latest lifecycle snapshot on attachment.
+
+The shared `SessionLifecycle` type is exported by `@code-yeongyu/senpi`:
+
+- `state`: `running`, `waiting_children`, `waiting_background`, `waiting_human`,
+  `paused`, `held`, `done`, `failed`, or `cancelled`.
+- `seq`, `epoch`, `epochOrigin` (`human` or `automatic`), `humanInputRevision`,
+  `selfSettleEligible`, `restoring`, `persisted`, `runPaused`, and `since` (ISO time).
+- `role` (`root` or `child`), `rootSessionId`, and optional `parentSessionId` and `taskId`.
+- Optional `waitingOn`: `{ children, background, human }`. Background entries carry
+  `source`, `activeCount`, and optional `retryAtMs`. Human entries carry `kind`,
+  `originSessionId`, `requestId`, `revision`, `since`, and optional child identity/label.
+  Human kinds are `question`, `approval`, `goal_blocked`, `goal_paused`, `stalled`,
+  and `interrupted_run`; attention remains visible even when a hold wins precedence.
+- Optional `holds`: `{ kind, since }[]` from the shared hold ledger, where `kind` is
+  `session_hold`, `inherited_hold`, `run_fence`, or `unattended`.
+- On a sealed epoch, `completionId` is `<sessionId>:<epoch>`, the session's own id (for a root
+  this equals `rootSessionId`), so a child's terminal never shares its root's id. A `done` also carries
+  `completion: { kind: "goal" | "run" | "agent" | "reply", at, goalId?, runId? }`.
+  A `failed` carries `failure: { reason, message?, retryAtMs?, taskId?, runEpoch? }`,
+  with reason `provider_error`, `tool_error`, `task_error`, `lost`, or `interrupted`.
+- A standing agent self-settle intent adds `settleDecision: { decisionId }` to the
+  persisted `done` seal, independently of the completion label.
+
+Clients must not notify or settle while `restoring` is true or `persisted` is false.
+Use `completionId` to deduplicate root completion/failure, not `agent_settled` or
+`agent_idle`: a queued result or background source can still own unfinished work.
+An ordinary reply completing is not itself a request to mark a thread Done.
+
+#### request_self_settle
+
+Records an agent intent for the current root epoch:
+
+```json
+{"id":"settle","type":"request_self_settle"}
+```
+
+The successful response's `data` is `{ recorded, epoch, humanInputRevision, reason? }`.
+Refusal reasons are `not_eligible`, `held`, and `no_epoch`. Subsequent human input,
+a hold/fence, or a failed seal invalidates the intent. Unsealed intents fail closed
+on restart; sealed decisions retain their identity. Human revisions count only
+the shared human-admission hook, including connections that declared
+`interactive_user` in their first `set_client_info`, never automatic extension input.
+
+`open_session.spawnedBy` is `{ parentSessionId, rootSessionId, taskId }`, with three
+nonempty strings, persisted in the new session header. It identifies execution
+children; `parentSession` remains fork/transcript ancestry and does not make a child.
+A malformed `spawnedBy` is refused with the error `invalid_spawned_by`.
+
 ## Eval cell control
 
 `eval_cells.list`, `eval_cells.peek`, and `eval_cells.stop` are session-scoped
@@ -3067,6 +3121,8 @@ Response:
   "data": {
     "model": {...},
     "thinkingLevel": "medium",
+    "thinkingLevelSource": "session",
+    "sessionModelThinkingLevels": {"anthropic/<model>": "medium", "openai/<model>": "high"},
     "serviceTier": "priority",
     "fastMode": true,
     "isStreaming": false,
@@ -3087,6 +3143,8 @@ Response:
 The `model` field is a full [Model](#model) object or `null`. `pendingModelSwitch` is always present: `null` means no held switch, while an object with `provider` and `id` identifies a switch that applies after the next compaction. The `sessionName` field is the display name set via `set_session_name`, or omitted if not set.
 
 `pendingDialogs` contains the live `extension_ui_request` frames for select, confirm, input and editor dialogs, or `[]` when none await an answer. Still-open dialogs remain listed after session replacement; resolved, cancelled and timed-out requests are removed. Use these frames to reconcile dialogs during event recovery, separately from `pendingQuestions`.
+
+Each model keeps its own thinking level per session. `sessionModelThinkingLevels` maps `provider/id` to the level that model last ran at in this session, rebuilt from the session file on resume. A model switch (`set_model`, `cycle_model`, the TUI's `/model`) restores, in order: this session's level for the model, a favorite's `:level`, the model's last level in any session (`modelThinkingLevels` in settings), the model's own default, then the configured default, always clamped to the levels the model supports. `thinkingLevelSource` says which one applies: `explicit` (set directly), `session`, `global`, `model-default`, `default`, `fallback` (a retry fallback's temporary level) or `clamped` (a requested or restored level the model cannot run, replaced by the nearest one it can). Hosts before this change omit both fields.
 
 `serviceTier` is the tier a request would carry right now (`"auto"`, `"flex"`, or `"priority"`), omitted when no tier applies. `fastMode` is `true` when the active model is served at the priority ("fast") tier — either because fast mode is on for this session or because the model selection itself pins `priority`. The two never disagree: whenever `fastMode` is `true`, `serviceTier` is `"priority"`.
 
@@ -3349,6 +3407,26 @@ Response:
   }
 }
 ```
+
+#### get_model_thinking_level
+
+The thinking level one model runs at in this session, without switching to it. For the active model it is the current level; for any other model it is the level `set_model` would restore (see `thinkingLevelSource` under [get_state](#get_state) for the order). A client shows a model's effort with it before the user sends anything, instead of keeping its own per-model copy. The command only reads and does not count as session activity.
+
+```json
+{"type": "get_model_thinking_level", "provider": "openai", "modelId": "<model>"}
+```
+
+Response:
+```json
+{
+  "type": "response",
+  "command": "get_model_thinking_level",
+  "success": true,
+  "data": {"level": "high", "source": "session", "availableLevels": ["off", "low", "medium", "high"]}
+}
+```
+
+An unknown model answers `success: false` with `errorCode: "model_not_found"`; a missing `provider` or `modelId` answers `errorCode: "invalid_argument"`.
 
 ### Fast mode
 
@@ -3689,6 +3767,8 @@ Response:
   }
 }
 ```
+
+`cost` sums the provider-reported cost of every turn. `costUnknown: true` appears when at least one turn ran on a model with no known price (senpi#3844): `cost` is then a lower bound, not the full spend. The field is absent otherwise.
 
 `failures` reports what failed provider requests cost the session. Every assistant response is one request; `erroredRequests` and `abortedRequests` count responses that ended with stop reason `error` or `aborted`, and `failedDurationMs` sums their time from request start to the recorded response. `postFailureRequests` counts the first successful response after one or more failed ones within the same user turn (a user message resets it); `postFailureFullMissRequests` counts those that read nothing from the prompt cache on a prompt of at least 2048 tokens, and `postFailureFullMissInputTokens` sums their uncached prompt tokens (input plus cache writes). The token counts are the provider's usage report; attributing the cache miss to the preceding failure is an inference from the turn's sequence. Hosts older than this field omit it.
 
@@ -5184,6 +5264,21 @@ Set or clear a status entry in the footer/status bar. Fire-and-forget.
 ```
 
 Send `statusText: undefined` (or omit it) to clear the status entry for that key.
+
+#### setSubagentCost
+
+Report the USD the subagent tree under this session has spent, which the TUI footer shows after the session's own cost as `$0.380 (+1.270)`. Fire-and-forget.
+
+```json
+{
+  "type": "extension_ui_request",
+  "id": "uuid-7",
+  "method": "setSubagentCost",
+  "costUsd": 1.27
+}
+```
+
+`costUsd: undefined` (or omitted) clears it. A negative or non-finite figure is sent as `undefined`.
 
 #### setWidget
 

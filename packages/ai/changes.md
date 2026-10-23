@@ -1,3 +1,21 @@
+## 2026-10-23 - Release regeneration can keep the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `packages/ai/scripts/generate-models.ts`: new `--keep-last-good-opengateway` flag, passed to `fetchOpenGatewayModels` as `keepLastGoodOnFailure`. With it, an OpenGateway feed failure under `--strict` keeps the committed `data/opengateway.json` and prints a `::warning::` annotation; without it `--strict` still throws. The flag is refused together with `--providers`, and without `--strict` (where it would do nothing).
+
+### Why
+
+- `packages/ai/scripts/generate-models.ts`: an OpenGateway price-table format change stopped the release's `--strict` regeneration (senpi#4067). The release must not stop on one gateway feed, but the dedicated `--strict --providers opengateway` refresh workflow has to keep failing so a persistent feed break stays visible.
+
+### Why an extension could not handle it
+
+- `packages/ai/scripts/generate-models.ts`: committed catalog generation runs before runtime extensions.
+
+### Expected merge conflict zones
+
+- `packages/ai/scripts/generate-models.ts`: `readGeneratorOptions` and the `fetchOpenGatewayModels` call in `generateModels`.
+
 ## 2026-10-21 - Launch-gated Fable 5.5 generation (senpi#3893)
 
 ### What changed

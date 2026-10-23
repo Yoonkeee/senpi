@@ -34,6 +34,42 @@
 
 - LOW: `packages/coding-agent/src/core/extensions/builtin/handoff-hint/index.ts`, `promptTokensOfFirstReply`.
 
+## 2026-10-21 - Deliver a resumed question's answer as a user message (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts` passes `deliver: "user-message"` for a question resumed after a restart, as it already did for an async question; only a live blocking question passes `tool-result`.
+
+### Why
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: a resumed question's answer is delivered by `deliverAnswer`, whose question-input release reports it as human input. The RPC adapter reports `tool-result` answers itself, so the option must say which path delivers the answer or one answer counts twice.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the builtin owns answer delivery for every surface, while lifecycle accounting belongs to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/ask-user/tool.ts`: the `deliver` member of the question dialog options in `startQuestion`.
+
+## 2026-10-21 - Declare lifecycle wake-source obligation kinds (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent` accepts an optional `children` or `background` kind. Publishers without it retain background semantics.
+
+### Why
+
+Child work must remain distinct from monitors and background jobs in lifecycle accounting.
+
+### Why an extension could not handle it
+
+The shared cross-package event contract is engine-owned.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/core/extensions/builtin/monitor-state-event.ts`: `WakeSourceStateEvent`.
+
 ## 2026-10-21 - Distinguish human question answers from automatic timeouts (senpi#3853)
 
 ### What changed

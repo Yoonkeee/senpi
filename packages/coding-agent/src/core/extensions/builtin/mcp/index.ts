@@ -126,6 +126,7 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 			sink,
 		);
 		pi.on("session_start", (event, ctx) => {
+			if (event.sizesOnly) return;
 			const work = onSessionStart(event, ctx);
 			// First paint does not wait for attach; prompt preparation reuses its promise.
 			void work;

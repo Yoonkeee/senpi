@@ -1,3 +1,21 @@
+## 2026-10-18 - Skip MCP attach during size inspection (senpi#3483)
+
+### What changed
+
+- `index.ts`: `session_start.sizesOnly` returns before starting either HTTP or stdio attachment. Normal startup and preview composition retain their existing attach promise.
+
+### Why
+
+Size inspection must not connect to configured MCP servers. The report inventories configured names/count without sizes and explicitly excludes their tools. A real HTTP recording fixture asserts zero connections for diagnostic startup and successful attachment for normal startup.
+
+### Why an extension could not handle it
+
+The built-in starts the attach; another extension cannot undo its network work.
+
+### Expected merge conflict zones
+
+- `index.ts`: `session_start` immediately before `onSessionStart`.
+
 ## 2026-10-20 - Retain same-session skill servers during MCP administrative reattach (senpi#3796)
 
 ### What changed

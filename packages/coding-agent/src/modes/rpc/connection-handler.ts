@@ -141,6 +141,7 @@ import {
 	RPC_ERROR_INVALID_ARGUMENT,
 	RPC_ERROR_INVALID_EVAL_CELL_REQUEST,
 	RPC_ERROR_MEDIA_NOT_FOUND,
+	RPC_ERROR_MODEL_NOT_FOUND,
 	RPC_ERROR_RESPONSE_TOO_LARGE,
 	STEER_WHEN_IDLE_CAPABILITY,
 	USER_ACTIVITY_CAPABILITY,
@@ -497,10 +498,10 @@ export function createRpcConnectionHandler(
 	};
 
 	// Pending extension UI requests waiting for response
-	const pendingExtensionRequests = new SessionExtensionUiRequests();
+	const pendingExtensionRequests = new SessionExtensionUiRequests(() => session.refreshLifecycle());
 	const grantRequests = new Map<string, string | undefined>();
 	sessionDialogRequests.set(session, pendingExtensionRequests);
-	const questions = new ConnectionQuestionBridge(output);
+	const questions = new ConnectionQuestionBridge(output, () => session.refreshLifecycle());
 
 	let shutdownRequested = false;
 
@@ -627,6 +628,16 @@ export function createRpcConnectionHandler(
 				method: "setStatus",
 				statusKey: key,
 				statusText: text,
+			} as RpcExtensionUIRequest);
+		},
+
+		setSubagentCost(costUsd: number | undefined): void {
+			// Fire and forget, like setStatus: a client that renders the footer cost adds it there.
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "setSubagentCost",
+				costUsd: costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0 ? costUsd : undefined,
 			} as RpcExtensionUIRequest);
 		},
 
@@ -1120,6 +1131,7 @@ export function createRpcConnectionHandler(
 						capabilities: [
 							...new Set([
 								"multi_session",
+								"session_lifecycle",
 								AUTO_TITLE_SESSIONS_CAPABILITY,
 								MEDIA_PLACEHOLDERS_CAPABILITY,
 								DURABLE_CLIENT_MESSAGE_ID_CAPABILITY,
@@ -1387,6 +1399,8 @@ export function createRpcConnectionHandler(
 
 			case "get_state":
 				return success(id, "get_state", buildRpcSessionState(session, lastAbortSource));
+			case "request_self_settle":
+				return success(id, "request_self_settle", session.requestSelfSettle());
 
 			case "get_effect_status":
 				return runGetEffectStatus(effectContext(), command);
@@ -1441,6 +1455,28 @@ export function createRpcConnectionHandler(
 				return success(id, "get_available_thinking_levels", {
 					levels: session.getAvailableThinkingLevels(),
 				});
+
+			case "get_model_thinking_level": {
+				if (typeof command.provider !== "string" || typeof command.modelId !== "string") {
+					return error(
+						id,
+						"get_model_thinking_level",
+						"get_model_thinking_level requires 'provider' and 'modelId'.",
+						RPC_ERROR_INVALID_ARGUMENT,
+					);
+				}
+				const models = await session.modelRegistry.getAvailable();
+				const model = models.find((m) => m.provider === command.provider && m.id === command.modelId);
+				if (!model) {
+					return error(
+						id,
+						"get_model_thinking_level",
+						`Model not found: ${command.provider}/${command.modelId}`,
+						RPC_ERROR_MODEL_NOT_FOUND,
+					);
+				}
+				return success(id, "get_model_thinking_level", session.getThinkingLevelForModel(model));
+			}
 
 			// =================================================================
 			// Fast mode
@@ -2138,6 +2174,8 @@ export function createRpcConnectionHandler(
 				questions,
 				dialogs: pendingExtensionRequests,
 				routed: routingSessionId !== undefined,
+				// An answer is a person's input by its entry point, whatever the connection role.
+				beforeAnswer: () => session.admitHumanAnswer(),
 			});
 			if (reply) output(reply);
 			return;

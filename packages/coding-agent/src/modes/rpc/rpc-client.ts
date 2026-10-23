@@ -37,6 +37,7 @@ export class RpcCommandError extends Error {
 }
 
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
+import type { ThinkingLevelSource } from "../../core/session-thinking-memory.ts";
 import type { JsonAgentSessionEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import {
@@ -478,6 +479,7 @@ export class RpcClient {
 
 	async openSession(options: {
 		attended?: false;
+		spawnedBy?: import("../../core/session-lifecycle-types.ts").SpawnedBy;
 		/** Attach only on this generation; requires `expected_host_instance`. */
 		expectedHostInstance?: string;
 		sessionPath?: string;
@@ -950,6 +952,18 @@ export class RpcClient {
 	async getAvailableThinkingLevels(): Promise<ThinkingLevel[]> {
 		const response = await this.send({ type: "get_available_thinking_levels" });
 		return this.getData<{ levels: ThinkingLevel[] }>(response).levels;
+	}
+
+	/**
+	 * The level a model runs at in this session (the current one when it is active, otherwise what a
+	 * switch to it would restore), where that level comes from, and the levels the model supports.
+	 */
+	async getModelThinkingLevel(
+		provider: string,
+		modelId: string,
+	): Promise<{ level: ThinkingLevel; source: ThinkingLevelSource; availableLevels: ThinkingLevel[] }> {
+		const response = await this.send({ type: "get_model_thinking_level", provider, modelId });
+		return this.getData(response);
 	}
 
 	/**

@@ -48,6 +48,7 @@ import {
 	withTimeout,
 } from "./lib/anthropic-subscription-spike-support.mjs";
 import { runTurns, TOKEN_PROMPT } from "./lib/anthropic-subscription-reattach-worker.mjs";
+import { windowsTreeKillArgs } from "../../../../scripts/windows-process-tree.mjs";
 
 const WORKER_FLAG = "--reattach-worker";
 const SELF = fileURLToPath(import.meta.url);
@@ -164,7 +165,8 @@ function terminateChild(child) {
 			// child.kill() cannot reach the grandchild on Windows — there is no
 			// process group to signal — so take the whole tree down instead.
 			// taskkill on an exited worker fails harmlessly into the catch.
-			execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+			const args = windowsTreeKillArgs(child.pid);
+			if (args.length > 0) execFileSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 		} else {
 			// Group-kill even when the worker already exited: a grandchild in the
 			// detached group can outlive the worker, and an exited group leader

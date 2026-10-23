@@ -108,6 +108,42 @@
 
 - LOW: `packages/coding-agent/src/experimental/micro/runtime.ts`, `contextTokenCount`.
 
+## 2026-10-22 - Export the session lifecycle contract (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/index.ts`: exports lifecycle snapshots, events, child reports, `SpawnedBy`, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+- `packages/coding-agent/src/index.ts`: RPC clients and the desktop type against them.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/index.ts`: the package entry point is core.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/index.ts`: type export list.
+
+## 2026-10-21 - Export the shared session lifecycle contract (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/index.ts` exports lifecycle snapshots, events, child reports, spawned-session identity, self-settle results and obligation/ticket interfaces.
+
+### Why
+
+`packages/coding-agent/src/index.ts`: RPC clients and extension producers need the engine's named contract rather than separate copies.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/index.ts`: the package's public entry point and its declarations belong to the engine.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/index.ts`: core session type exports.
+
 ## 2026-10-18 - A session is found by the id its file name carries (oh-my-openagent#7471)
 
 ### What changed
@@ -5298,6 +5334,23 @@ The package barrel is the only public entry point; an extension cannot add expor
 ### Expected merge conflict zones
 
 - LOW: the `core/skills.ts` export block in `packages/coding-agent/src/index.ts`.
+## 2026-10-16 - Offline prompt size CLI route (senpi#3483)
+
+### What changed
+
+- `packages/coding-agent/src/main.ts`: `--print-prompt-sizes` forces offline print startup, opens the normal runtime and exits through the diagnostic before stdin, model streaming or catalog refresh.
+
+### Why
+
+The size breakdown must describe the loaded current project, including extensions, while making no provider request.
+
+### Why an extension could not handle it
+
+The flag changes core startup and dispatch before extensions can handle a turn.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/main.ts`: offline selection, app mode selection and the post-runtime-creation diagnostic branch.
 
 ## 2026-10-16 - Auth notices reach the TUI at startup, once per change (#3448)
 

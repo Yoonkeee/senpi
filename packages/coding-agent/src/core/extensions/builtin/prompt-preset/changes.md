@@ -1,3 +1,22 @@
+## 2026-10-18 - Measure the preset actually composed (senpi#3483)
+
+### What changed
+
+- `presets.ts` observes the parts from each preset's real dynamic-builder call and returns them alongside its unchanged prompt. `index.ts` passes those parts, plus only the user's append when present, to preview accounting. Replaced base sections and session policy are not reported.
+- API note: the public `buildDynamicSystemPrompt` now honours custom/append options. `eventOptionsToBuilderInput` deliberately strips both before preset construction; user appends are reapplied once.
+
+### Why
+
+The default builder's sections do not describe a model preset replacement. A golden captured from main before this fold proves the preset bytes stay unchanged.
+
+### Why an extension could not handle it
+
+Only the preset's actual builder call owns its section boundaries.
+
+### Expected merge conflict zones
+
+- `presets.ts`: resolved preset metadata and builder dispatch. `index.ts`: before-agent-start return and user append handling.
+
 ## 2026-10-21 - Launch-gated Fable 5.5 preset (senpi#3893)
 
 ### What changed

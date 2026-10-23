@@ -36,6 +36,7 @@ export interface WakeSourceStateItem {
 export interface WakeSourceStateEvent {
 	readonly source: string;
 	readonly activeCount: number;
+	readonly kind?: "children" | "background";
 	readonly items?: readonly WakeSourceStateItem[];
 }
 

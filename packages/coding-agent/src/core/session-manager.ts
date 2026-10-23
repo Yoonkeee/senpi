@@ -52,6 +52,7 @@ import {
 import { materializeSessionEntries } from "./session-entry-materializer.ts";
 import { replaceFileAtomically } from "./session-file-replace.ts";
 import { type HistoryReducer, HistoryReductions } from "./session-history-reduce.ts";
+import type { SpawnedBy } from "./session-lifecycle-types.ts";
 import { planLoadedTail } from "./session-loaded-tail.ts";
 import { SessionWriteGuard } from "./session-move/write-guard.ts";
 import { type ResidentStoreStats, ResidentStringStore } from "./session-resident-store.ts";
@@ -166,6 +167,8 @@ export interface UsageTotals {
 	cacheRead: number;
 	cacheWrite: number;
 	cost: number;
+	/** Some summed turn had no known price, so `cost` is a lower bound (senpi#3844). */
+	costUnknown?: true;
 	latestCacheHitRate: number | undefined;
 }
 
@@ -182,11 +185,14 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	/** Execution ancestry, unlike parentSession's transcript/fork provenance. */
+	spawnedBy?: SpawnedBy;
 }
 
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	spawnedBy?: SpawnedBy;
 }
 
 export interface SessionEntryBase {
@@ -217,6 +223,9 @@ export interface ThinkingLevelChangeEntry extends SessionEntryBase {
 	triggerActor?: string;
 	/** The RPC model or thinking-level effect that applied this value. */
 	effectId?: string;
+	/** Model the level applied to (senpi#3819); absent on older entries. Feeds the per-session per-model map. */
+	provider?: string;
+	modelId?: string;
 }
 
 export interface ConfigurationUpdateEntry extends SessionEntryBase {
@@ -1134,9 +1143,12 @@ const SETUP_ENTRY_TYPES: ReadonlySet<FileEntry["type"]> = new Set([
 	"label",
 ]);
 
-/** A `custom` entry is disposable only when its writer marked it as startup bookkeeping (senpi#3263). */
+/** Engine lifecycle bookkeeping (senpi#3864): durable before any conversation, disposable without one. */
+const LIFECYCLE_ENTRY_TYPES: ReadonlySet<string> = new Set(["session-lifecycle", "work-custody", "child-lifecycle"]);
+
+/** A `custom` entry is disposable when its writer marked it as startup bookkeeping (senpi#3263) or it is lifecycle bookkeeping. */
 function isDisposableEntry(entry: FileEntry): boolean {
-	if (entry.type === "custom") return entry.startupBookkeeping === true;
+	if (entry.type === "custom") return entry.startupBookkeeping === true || LIFECYCLE_ENTRY_TYPES.has(entry.customType);
 	return SETUP_ENTRY_TYPES.has(entry.type);
 }
 
@@ -1450,6 +1462,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			...(options?.spawnedBy ? { spawnedBy: options.spawnedBy } : {}),
 		};
 		this.fileEntries = [header];
 		this.historyGeneration++;
@@ -1636,8 +1649,9 @@ export class SessionManager {
 
 	/**
 	 * Removes the session file when this process created it with persistHeaderNow() and it holds only
-	 * setup entries (header, model, thinking level, configuration, labels) and `custom` entries their
-	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity), then returns to
+	 * setup entries (header, model, thinking level, configuration, labels), `custom` entries their
+	 * writer marked `startupBookkeeping` (the startup rules scan, repository identity) and engine lifecycle
+	 * bookkeeping (senpi#3864, including a file that bookkeeping created itself), then returns to
 	 * buffering so a later entry cannot recreate a header-less file; those entries reach disk again with
 	 * the first message (senpi#3263). Any message (user, assistant, `!cmd`), delivered `custom_message`,
 	 * session name, other `custom` entry (such as a paid cache prewarm or a todo list) or usage record
@@ -1728,10 +1742,14 @@ export class SessionManager {
 
 		// Entries stay in memory only until the branch holds a user or assistant message; then all are
 		// written (#10000: the prompt reaches disk even if the first turn never completes).
-		if (!isConversationEntry(entry) && !this._hasConversation()) return;
+		const durableLifecycle = entry.type === "custom" && LIFECYCLE_ENTRY_TYPES.has(entry.customType);
+		if (!isConversationEntry(entry) && !durableLifecycle && !this._hasConversation()) return;
 
 		// An asynchronous header write owns the file until it finishes, and appends this entry.
-		if (this.headerWrite) return;
+		if (this.headerWrite) {
+			if (durableLifecycle) throw new Error("Lifecycle append requires the pending session header write to finish");
+			return;
+		}
 		const fd = openSync(this.sessionFile, "wx");
 		try {
 			for (const e of [...this.fileEntries, entry]) {
@@ -1742,6 +1760,8 @@ export class SessionManager {
 		}
 		closeSync(fd);
 		this.flushed = true;
+		// Lifecycle bookkeeping created this file before any conversation, so an empty session can still discard it.
+		if (!isConversationEntry(entry) && !this._hasConversation()) this.ownedHeaderFile = this.sessionFile;
 	}
 
 	private _appendEntry(entry: SessionEntry, shareable?: object): void {
@@ -1836,6 +1856,7 @@ export class SessionManager {
 		this.usageTotals.cacheRead += usage.cacheRead;
 		this.usageTotals.cacheWrite += usage.cacheWrite;
 		this.usageTotals.cost += usage.cost?.total ?? 0;
+		if (usage.costUnknown) this.usageTotals.costUnknown = true;
 		const latestPromptTokens = usage.input + usage.cacheRead + usage.cacheWrite;
 		this.usageTotals.latestCacheHitRate =
 			latestPromptTokens > 0 ? (usage.cacheRead / latestPromptTokens) * 100 : undefined;
@@ -1908,6 +1929,7 @@ export class SessionManager {
 		thinkingLevel: string,
 		thinkingSelection?: ThinkingSelection,
 		trigger?: ModelChangeOrigin,
+		model?: { readonly provider: string; readonly id: string },
 	): string {
 		const entry: ThinkingLevelChangeEntry = {
 			type: "thinking_level_change",
@@ -1919,6 +1941,7 @@ export class SessionManager {
 			...(trigger === undefined ? {} : { triggerSource: trigger.source }),
 			...(trigger?.actor === undefined ? {} : { triggerActor: trigger.actor }),
 			...(trigger?.effectId === undefined ? {} : { effectId: trigger.effectId }),
+			...(model === undefined ? {} : { provider: model.provider, modelId: model.id }),
 		};
 		this._appendEntry(entry);
 		return entry.id;
@@ -2066,12 +2089,16 @@ export class SessionManager {
 		if (firstKeptIndex < 0 || compactionIndex < firstKeptIndex) return;
 
 		const verbatimStart = this.fileEntries.length - (this.fullEntryCount - this.verbatimFromCount);
-		if (firstKeptIndex >= verbatimStart)
-			this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstKeptIndex);
 		const header = this.fileEntries.find((entry) => entry.type === "session");
+		const branchIds = new Set(this.getBranch().map((entry) => entry.id));
+		let firstVerbatimIndex = Math.max(firstKeptIndex, verbatimStart);
+		for (let i = firstVerbatimIndex; i < compactionIndex; i++) {
+			if (!branchIds.has(this.fileEntries[i].id)) firstVerbatimIndex = i + 1;
+		}
+		this.verbatimFromCount = this.fullEntryCount - (compactionIndex + 1 - firstVerbatimIndex);
 		const retained = [
 			...this.fileEntries.slice(0, firstKeptIndex).filter((entry) => entry.type !== "message"),
-			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1),
+			...this.fileEntries.slice(firstKeptIndex, compactionIndex + 1).filter((entry) => branchIds.has(entry.id)),
 		];
 		let parentId: string | null = null;
 		for (const entry of retained) {

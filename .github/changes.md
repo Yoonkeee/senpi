@@ -1,3 +1,21 @@
+## 2026-10-23 - The model catalog publish keeps the last good OpenGateway catalog (senpi#4067)
+
+### What changed
+
+- `.github/workflows/publish-model-catalog.yml`: the `Generate model catalog JSON` step forwards `--keep-last-good-opengateway` to `generate-model-catalog`.
+
+### Why
+
+- `.github/workflows/publish-model-catalog.yml`: a long OpenGateway outage would otherwise turn every publish red; the dedicated OpenGateway catalog refresh workflow is the one job that fails on it.
+
+### Why an extension could not handle it
+
+- `.github/workflows/publish-model-catalog.yml`: workflow configuration is outside runtime extension points.
+
+### Expected merge conflict zones
+
+- `.github/workflows/publish-model-catalog.yml`: the `Generate model catalog JSON` step.
+
 ## 2026-10-22 - Static checks have a bounded compiler heap (senpi#4022)
 
 ### What changed

@@ -1,3 +1,22 @@
+## 2026-10-21 - A cost total that includes unpriced turns is marked as a lower bound (senpi#3844)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the session cost reads `$X+?` when `UsageTotals.costUnknown` is set.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the `/session` cost total, and each per-model breakdown row, appends `+ unpriced turns` when `SessionStats.costUnknown` (or the row's `costUnknown`) is set.
+
+### Why
+
+- A model with no known price reports its turns as `costUnknown` (senpi#3844). Summing them as $0 would show a complete-looking total that hides the unpriced spend; the marker says the amount is a lower bound. Test: `test/footer-usage-display.test.ts`.
+
+### Why an extension could not handle it
+
+- The footer and `/session` render the core usage totals directly.
+
+### Expected merge conflict zones
+
+- LOW: the `costStr` line in `footer.ts`; the `/session` cost `Total:` line in `interactive-mode.ts`.
+
 ## 2026-10-20 - Present retained skill security reasons once (senpi#3796)
 
 ### What changed
@@ -59,6 +78,42 @@ Startup warning filtering, `bindSession`, and extension presentation cleanup.
 
 - The settings selector block in `interactive-mode.ts`.
 
+
+## 2026-10-22 - Count a resumed TUI answer once (senpi#3864 review)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the question overlay reports a local answer as human input only when the answer is a tool result; a resumed question's `user-message` answer is reported by its delivery.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a resumed blocking question answered in the TUI was counted twice.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the overlay is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: `showQuestionOverlay` finish.
+
+## 2026-10-22 - Admit TUI answers as human input for the lifecycle (senpi#3864)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: admits a synchronous question/dialog answer through `admitHumanAnswer` before resuming work.
+
+### Why
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: a person answering must invalidate self-settle and count as human input.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the TUI answer path is interactive mode itself.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: question/dialog answer handling.
 
 ## 2026-10-21 - The resume picker's search finds a session by the id its file name carries (oh-my-openagent#7471)
 
@@ -3186,3 +3241,40 @@ The shared markdown theme and the tool card's renderer are interactive-mode inte
 ### Expected merge conflict zones
 
 - LOW: `sharedMarkdownTheme()` in `theme.ts`; the theme imports and default arguments of the seven message components; `releaseContent()` in `tool-execution-renderer.ts`.
+
+## 2026-10-20 - Footer shows the subagent tree cost (senpi#2471)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/components/footer.ts`: the cost segment appends ` (+X.XXX)` when the reported subagent cost is positive, and shows the segment when only subagents have spent.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the extension UI context's `setSubagentCost` stores the figure on the footer data provider and requests a render.
+
+### Why
+
+- A session that fans out to subagents showed only its own spend in the footer, so it looked far cheaper than it was. The extension that runs the subagents (omo's task engine) knows the tree's spend; the footer needs a typed way to receive it and show it as `$0.380 (+1.270)` (oh-my-pi parity).
+
+### Why an extension could not handle it
+
+- The built-in footer's cost segment and the `ExtensionUIContext` contract are core; `setStatus` can only add a separate status line, not place a figure inside the cost segment.
+
+### Expected merge conflict zones
+
+- MEDIUM: `footer.ts` cost-segment block (`totalCost || usingSubscription`).
+- LOW: `interactive-mode.ts` extension UI context object next to `setStatus`.
+## 2026-10-21 - Admit synchronous human replies before resuming work (senpi#3864)
+
+### What changed
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: accepted selector, input and editor replies, and synchronous questions explicitly answered by the local UI, report through the existing human-input admission hook before their promises resolve.
+
+### Why
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: an answer may resume the current turn without admitting a new turn, but must still invalidate a standing agent self-settle intent.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: the UI adapter owns the accepted local-user callback; automatic timeout/abort paths must not be classified as human.
+
+### Expected merge conflict zones
+
+`packages/coding-agent/src/modes/interactive/interactive-mode.ts`: extension selector/input/editor callbacks and blocking question completion. Preserve the existing asynchronous question-input admission path.

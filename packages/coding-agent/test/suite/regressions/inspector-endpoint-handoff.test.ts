@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { PassThrough, type Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { windowsTreeKillArgs } from "../../../../../scripts/windows-process-tree.mjs";
 
 interface InspectorState {
 	readonly url: string;
@@ -93,7 +94,8 @@ async function terminateProcessTree(child: ChildProcessByStdio<null, Readable, R
 	if (child.exitCode !== null || child.pid === undefined) return;
 	const closed = waitForClose(child, 5_000);
 	if (process.platform === "win32") {
-		spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+		const args = windowsTreeKillArgs(child.pid);
+		if (args.length > 0) spawnSync("taskkill", args, { stdio: "ignore", windowsHide: true });
 	} else {
 		try {
 			process.kill(-child.pid, "SIGKILL");

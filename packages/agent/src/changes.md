@@ -39,6 +39,24 @@
 
 - LOW: `packages/agent/src/harness/compaction/compaction.ts`, `calculateContextTokens`. Preserve the existing fallback for providers without request measurements.
 
+## 2026-10-22 - Inspect both message queues (senpi#3864)
+
+### What changed
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages({ all: true })` returns steering and follow-up queues without consuming them.
+
+### Why
+
+- `packages/agent/src/agent.ts`: delivery-ticket retries must see every queued copy.
+
+### Why an extension could not handle it
+
+- `packages/agent/src/agent.ts`: the queues are private to `Agent`.
+
+### Expected merge conflict zones
+
+- `packages/agent/src/agent.ts`: `peekQueuedMessages`.
+
 ## 2026-10-21 - A run that failed in the queued-input port is marked local (senpi#3866)
 
 ### What changed
@@ -56,6 +74,24 @@
 ### Expected merge conflict zones
 
 - LOW: `packages/agent/src/agent.ts`, the import block, the `port` line in `takeQueuedMessages`, the `queuedInputPort` line in `createLoopConfig`, and the spread list of `handleRunFailure`'s failure message.
+
+## 2026-10-21 - Inspect both message queues for delivery-ticket retries (senpi#3864)
+
+### What changed
+
+`packages/agent/src/agent.ts`: `peekQueuedMessages({ all: true })` snapshots both steering and follow-up queues. Without the option it still previews only the next selected queue.
+
+### Why
+
+`packages/coding-agent/src/core/agent-session.ts` must detect a retained ticket in either queue before retrying admission; a pending steer must not hide an already queued follow-up.
+
+### Why an extension could not handle it
+
+The native agent owns both queues and their message identities.
+
+### Expected merge conflict zones
+
+`packages/agent/src/agent.ts`: queue preview methods.
 
 ## 2026-10-17 - Queued input's consumption is committed before a provider sees it (senpi#3549)
 
