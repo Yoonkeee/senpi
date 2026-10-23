@@ -357,6 +357,28 @@ describe("RPC auth and connection handler contracts", () => {
 		await handler.dispose();
 	});
 
+	it("refuses a login_api_key without a usable key and stores nothing (#3867)", async () => {
+		const collected = makeSink();
+		const harness = makeHarness(tempDir);
+		cleanup = harness.cleanup;
+		const handler = createRpcConnectionHandler(harness.runtimeHost, collected.sink);
+
+		for (const [id, extra] of [
+			["missing", {}],
+			["empty", { key: "" }],
+			["blank", { key: "  " }],
+		] as const) {
+			await handler.handleInputLine(JSON.stringify({ id, type: "login_api_key", provider: "anthropic", ...extra }));
+			expect(await collected.waitFor((message) => message.id === id)).toMatchObject({
+				success: false,
+				error: expect.stringContaining("empty API key"),
+			});
+		}
+		const stored = JSON.parse(readFileSync(harness.authPath, "utf-8")) as Record<string, unknown>;
+		expect(stored.anthropic).toBeUndefined();
+		await handler.dispose();
+	});
+
 	it("auth_login_end names the API key an OAuth login replaced and where its backup is (senpi#3486)", async () => {
 		const collected = makeSink();
 		const harness = makeHarness(tempDir);

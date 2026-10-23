@@ -1,3 +1,49 @@
+## 2026-10-20 - Retain same-session skill servers during MCP administrative reattach (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` retains skill-resolved servers when the same live session reattaches with the same agent directory, explicit environment and trust decision. Newly loaded system or extension declarations still win name collisions. The effective trust decision is captured in the binding's options.
+
+### Why
+
+The reconnect command reattaches after renewing its server. Rebuilding config without the session's skill declarations disposed every skill transport, including a peer project's pending policy resolution, which then reported that its materialization was invalidated. Skill registrations last for their declaring session; an administrative reattach is not an unload.
+
+### Why an extension could not handle it
+
+`packages/coding-agent/src/core/extensions/builtin/mcp/service.ts` owns the session binding and config reconciliation that dispose unwanted connections. Grant observers and generation invalidation remain authoritative, and changed session identity, trust, environment or agent directory do not inherit these registrations.
+
+### Expected merge conflict zones
+
+Session option capture and config reconciliation in `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`, especially the load/merge/bind sequence in `attachSession`.
+
+## 2026-10-20 - Scope project skill MCP environment grants to declarations (senpi#3796)
+
+### What changed
+
+Project skill servers use a finite inherited environment, explicit session overrides and declared values, with selective expansion after a names-only grant decision. User skill servers retain their existing resolver. `skills.ts` reauthorizes cached sidecars and frontmatter with provenance plus the allowed-set digest. `index.ts` feeds blocked declarations into retained session notices.
+
+The self-contained `env-grants-store.ts` supplies the shared version-1 schema, canonical declaration digest, atomic locked writer and state-reconciliation observer. Native callers pass the configured agent directory to its exported path resolver. `project-skill-policy.ts` rechecks declaration identity before grant writes and every transport materialization.
+
+`packages/coding-agent/src/core/extensions/builtin/mcp/env-grants-store.ts` retries only Windows `EPERM`, `EACCES` and `EBUSY` atomic replacements while holding the existing lock, with five backoffs totaling 1,550 ms.
+
+The store stays self-contained (no senpi-internal imports; oh-my-openagent vendors it byte-for-byte), so it does not use `core/file-lock.ts`. Instead its proper-lockfile lock passes its own `onCompromised`, which never throws (the default throws from a heartbeat timer and crashes the process) and only records the loss. Before every rename attempt, including each Windows retry, a lost lock refuses the write with `GrantsLockLostError` (code `ELOCKLOST`), leaving the old file and no temporary file. A lost lock is not released, so the new owner's lock is never removed. `test/proper-lockfile-reference-guard.test.ts` allow-lists this one vendored file and checks that it has no relative imports and an `onCompromised` on every lock call. `test/file-lock-lost-writes.test.ts` and `3796-grants-store.test.ts` (a loss during a Windows backoff) cover the refusal.
+
+`connection-types.ts`, `connection.ts`, `service-connection.ts`, `service.ts`, `transport.ts`, `transport-sdk.ts` and `project-stdio-transport.ts` carry policy through initial connect, renew and SDK restart. Project-only pool keys in `sharing-policy.ts` include declaration, policy and provenance digests. `host-registry.ts` observes grants and invalidates all matching underlying connections through `shared-connection.ts`, without waiting for leases to become idle.
+
+### Why
+
+Project declarations must not inherit unrelated ambient secrets or reuse another declaration's grant. Revocation must close an already shared child and prevent stale in-flight materialization.
+
+Concurrent readers, watcher reconciliation and antivirus can briefly hold the destination open on Windows, denying an otherwise valid atomic rename.
+
+### Why an extension could not handle it
+
+This builtin owns declaration resolution, transport construction, the shared connection pool and reconnect lifecycle.
+
+### Expected merge conflict zones
+
+Skill declaration cache keys, service attachment, transport materialization, shared pool identity and connection generation transitions.
+
 ## 2026-10-14 - Negotiate modern MCP behind an SDK lifecycle bridge (senpi#3304)
 
 ### What changed
@@ -1189,3 +1235,42 @@ The token store and refresh manager are this builtin's credential layer.
 ### Expected merge conflict zones
 
 `auth/oauth-provider.ts` token mapping and `auth/oauth-refresh.ts` `#doRefresh` at the next SDK or upstream sync.
+
+## 2026-10-22 - A connect or reconnect superseded by dispose or renew is not a server failure (senpi#4013)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/connection.ts`: `#markFailure` is a no-op once the connection is `disabled`, so `markDegraded`/`markSuspended`/`markNeedsAuth`/`markNeedsClientRegistration` from an attempt that dispose/disable superseded can no longer revive a disposed connection (which re-enabled `connect()`/`renew()`).
+- `packages/coding-agent/src/core/extensions/builtin/mcp/shared-lease.ts`: a released lease's `mark*` methods no longer reach the shared connection the surviving owners still use.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/startup-race.ts`: `connectMcpServer` returns without degrading or logging when the connection is `disabled` or its generation moved (a renew superseded the attempt); the startup `ensureFresh` catch returns silently once the connection is `disabled`.
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service-connection.ts`: the reconnect callback's `ensureFresh` catch returns silently once the connection is `disabled`.
+
+### Why
+
+- `dispose()` aborts an in-flight attempt by shutting its transport down, but `shutdownMcpTransport` waits at most `SHUTDOWN_CLOSE_WAIT_MS` for the close; under Bun the close, and so the attempt's rejection, can land after `dispose()` returned. The late `connect was superseded` was then treated as a server failure: the disposed connection flipped to `degraded`, and a warning was written to a server log whose path is fixed at logger construction, recreating a removed agent dir. A reconnect in flight at dispose, a renew that superseded a startup connect, and a late OAuth refresh failure did the same.
+
+### Why an extension could not handle it
+
+- These are the MCP builtin's own connection state machine and its attach/reconnect paths; no extension hook observes or owns them.
+
+### Expected merge conflict zones
+
+- `connection.ts` `#markFailure`; `shared-lease.ts` `mark*` overrides; `startup-race.ts` `connectMcpServer` and the `refreshConnectedMcpCatalog` auth catch; `service-connection.ts` reconnect callback auth catch.
+
+## 2026-10-22 - whenAttachSettled observes an attach that is still running (senpi#4027)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/mcp/service.ts`: `whenAttachSettled` first awaits the attach queue (every attach and re-sync joins it synchronously via `#queueSync`), bounded by the same timeout, and then the backgrounded connects in `#deferredAttach` with the remaining budget.
+
+### Why
+
+- An attach hands its backgrounded startup connects to `#deferredAttach` only after each startup race's 0 ms timer, near the end of the attach sync. A `whenAttachSettled` call that landed while the attach was still running read an empty pending set and reported `settled`, so a caller assembling the first turn (or a test observing the attach) saw MCP tools as attached when they were not.
+
+### Why an extension could not handle it
+
+- The attach queue and the deferred-connect set are private to the MCP service; no extension hook can observe an attach in flight.
+
+### Expected merge conflict zones
+
+- `service.ts` `whenAttachSettled` and its doc comment; the `./startup-race.ts` import list (`waitForMcpStartupRace`).

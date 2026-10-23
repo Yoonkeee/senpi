@@ -33,6 +33,7 @@ import {
 } from "./config.ts";
 import { brandProfile } from "./core/brand.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
+import { type HeldFileLock, lockWithLossHandling } from "./core/file-lock.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -178,9 +179,9 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		throw new Error(`Invalid managed release version: ${version}`);
 	}
 
-	let releaseLock: () => Promise<void>;
+	let updateLock: HeldFileLock;
 	try {
-		releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
+		updateLock = await lockWithLossHandling(join(managedRoot, "update"), { realpath: false });
 	} catch (error: unknown) {
 		if (error instanceof Error && "code" in error && error.code === "ELOCKED") {
 			throw new Error("Another managed Pi update is already running.");
@@ -202,6 +203,7 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 		const releaseDir = join(releasesRoot, version);
 		if (existsSync(releaseDir)) {
 			verifyManagedRelease(releaseDir, version);
+			updateLock.assertHeld();
 			activateManagedRelease(managedRoot, version);
 			return;
 		}
@@ -217,11 +219,13 @@ async function runManagedSelfUpdate(managedRoot: string, version: string): Promi
 
 		await runManagedNpmCi(stageDir);
 		verifyManagedRelease(stageDir, version);
+		updateLock.assertHeld();
 		renameSync(stageDir, releaseDir);
+		updateLock.assertHeld();
 		activateManagedRelease(managedRoot, version);
 	} finally {
 		if (stageDir) rmSync(stageDir, { force: true, recursive: true });
-		await releaseLock();
+		await updateLock.release();
 	}
 }
 

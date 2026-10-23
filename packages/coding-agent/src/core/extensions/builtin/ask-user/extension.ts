@@ -1,5 +1,5 @@
 import { APP_NAME } from "../../../../config.ts";
-import type { ExtensionAPI, ExtensionContext } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin } from "../../types.ts";
 import { pickVariant, TOOL_NAMES } from "./family.ts";
 import { deliverQueuedQuestionOutcomes, getPendingQuestions } from "./registry.ts";
 import { resumeDanglingQuestion } from "./resume.ts";
@@ -26,14 +26,24 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 	});
 	const state: AskUserState = { timedOut: false, unavailable: false };
 	let registered = false;
-	const cancelPending = (ctx: ExtensionContext, message: string, reportDetachedLoss = false) => {
+	const cancelPending = (
+		ctx: ExtensionContext,
+		origin: QuestionCancelOrigin,
+		message: string,
+		reportDetachedLoss = false,
+	) => {
 		for (const entry of getPendingQuestions(ctx.sessionManager.getSessionId()))
-			entry.cancel(message, reportDetachedLoss);
+			entry.cancel(origin, message, reportDetachedLoss);
 	};
 	const sync = (ctx: ExtensionContext, model = ctx.model) => {
 		const rest = pi.getActiveTools().filter((name) => !Object.values(TOOL_NAMES).includes(name));
 		if (ctx.getAskUserSettings?.().enabled === false || pi.getFlag("no-ask-user") === true) {
-			cancelPending(ctx, "The pending question was cancelled because ask-user is disabled.", true);
+			cancelPending(
+				ctx,
+				"ask_user_disabled",
+				"The pending question was cancelled because ask-user is disabled.",
+				true,
+			);
 			pi.setActiveTools(rest);
 			return;
 		}
@@ -65,6 +75,6 @@ export default function askUserExtension(pi: ExtensionAPI): void {
 			for (const entry of getPendingQuestions(ctx.sessionManager.getSessionId())) entry.detach();
 			return;
 		}
-		cancelPending(ctx, "The pending question was cancelled because the session closed.");
+		cancelPending(ctx, "session_closed", "The pending question was cancelled because the session closed.");
 	});
 }

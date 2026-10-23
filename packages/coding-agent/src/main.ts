@@ -510,9 +510,9 @@ async function rebindSessionOrExit(sourcePath: string, cwd: string, sessionDir?:
 	}
 }
 
-function sessionCwdOrUndefined(sessionFile: string): string | undefined {
+async function sessionCwdOrUndefined(sessionFile: string): Promise<string | undefined> {
 	try {
-		return readSessionCwd(sessionFile);
+		return await readSessionCwd(sessionFile);
 	} catch {
 		return undefined;
 	}
@@ -558,7 +558,7 @@ export async function createSessionManager(
 			console.error(chalk.red(`No session found matching '${resolved.arg}'`));
 			process.exit(1);
 		}
-		const sessionCwd = resolved.type === "global" ? resolved.cwd : sessionCwdOrUndefined(resolved.path);
+		const sessionCwd = resolved.type === "global" ? resolved.cwd : await sessionCwdOrUndefined(resolved.path);
 		if (resolved.type === "local" || sessionCwd === undefined || resolvePath(sessionCwd) === resolvePath(cwd)) {
 			return openSessionOrExit(resolved.path, sessionDir);
 		}

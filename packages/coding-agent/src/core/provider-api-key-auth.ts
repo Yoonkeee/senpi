@@ -58,6 +58,7 @@ export function composeApiKeyAuth(
 	}
 	return {
 		name: inherited?.name ?? "API key",
+		...(inherited?.keyOptional ? { keyOptional: true } : {}),
 		login:
 			inherited?.login ??
 			(headerSource && rawKey === undefined

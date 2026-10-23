@@ -1,4 +1,9 @@
-import type { ExtensionUIContext, QuestionRequest, QuestionResponse } from "../../core/extensions/types.ts";
+import type {
+	ExtensionUIContext,
+	QuestionCancelOrigin,
+	QuestionRequest,
+	QuestionResponse,
+} from "../../core/extensions/types.ts";
 import { settledQuestionStatus, unansweredQuestionIds } from "./extension-ui-response.ts";
 import type { RpcExtensionUIProgress, RpcExtensionUIResponse, RpcQuestionUiRequest } from "./rpc-types.ts";
 
@@ -47,7 +52,11 @@ export class ConnectionQuestionBridge {
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			let finished = false;
 			const unanswered = () => unansweredQuestionIds(request.questions, answers);
-			const finish = (status: QuestionResponse["status"], resolvedBy?: QuestionResponse["resolvedBy"]) => {
+			const finish = (
+				status: QuestionResponse["status"],
+				resolvedBy?: QuestionResponse["resolvedBy"],
+				cancelOrigin?: QuestionCancelOrigin,
+			) => {
 				if (finished) return;
 				finished = true;
 				clearTimeout(timer);
@@ -61,6 +70,7 @@ export class ConnectionQuestionBridge {
 					comment,
 					unanswered: unanswered(),
 					...(status === "timed_out" ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+					...(cancelOrigin !== undefined ? { cancelOrigin } : {}),
 				};
 				this.output({
 					type: "question_resolved",
@@ -106,8 +116,9 @@ export class ConnectionQuestionBridge {
 						});
 				},
 				respond: (response) => {
+					// The client's cancel is the user's; a closed connection or an abort is a lifecycle cancel.
 					if ("cancelled" in response) {
-						cancel();
+						finish("cancelled", undefined, "user");
 						return true;
 					}
 					if (!("answers" in response)) return false;
@@ -143,26 +154,48 @@ export async function degradeQuestion(
 	request: QuestionRequest,
 	opts?: Options,
 ): Promise<QuestionResponse> {
+	const askedAtMs = Date.now();
 	const answers: QuestionResponse["answers"] = {};
 	const other = "Other (type an answer)";
 	for (const question of request.questions) {
+		// An abort ends the fallback: no dialog opens after it.
+		if (opts?.signal?.aborted) break;
 		const selected = await ui.select(
 			question.question,
 			[...question.options.map((option) => option.label), other],
 			opts,
 		);
+		// A pick that lands after the abort is not an answer, whether a label or "Other".
+		if (opts?.signal?.aborted) break;
 		if (selected === other) {
 			const text = await ui.input(question.question, undefined, opts);
 			if (text?.trim()) answers[question.id] = { selected: [], text };
 		} else if (selected !== undefined) answers[question.id] = { selected: [selected] };
+		// Report the answers so far as the structured bridge does: an abort or the idle timer settles the
+		// question from the extension's draft, before this fallback returns.
+		if (answers[question.id] !== undefined) opts?.onProgress?.({ answers: { ...answers } });
 	}
-	const comment = await ui.input("Anything else? (optional)", undefined, opts);
-	const unanswered = request.questions.filter((q) => !answers[q.id]).map((q) => q.id);
+	const unanswered = unansweredQuestionIds(request.questions, answers);
+	// An abort is never an answer. Like the structured bridge it settles cancelled, or timed_out when
+	// the aborting side resolved that status; what the user had answered is kept as partial answers.
+	if (opts?.signal?.aborted) {
+		const timedOut = opts.signal.reason === "timed_out";
+		return {
+			status: timedOut ? "timed_out" : "cancelled",
+			answers,
+			unanswered,
+			...(timedOut ? { autoResolvedAfterMs: Date.now() - askedAtMs } : {}),
+		};
+	}
+	// No trailing "anything else?" prompt: a client without `question` shows every dialog as its own
+	// blocking card, so an optional comment read as a new question from the agent
+	// (sisyphuslabs/omo-desktop-app#4042). "Other" above still takes a typed answer per question.
+	// A partial answer settles like the structured path: answered, with the rest listed unanswered.
+	const status = settledQuestionStatus(answers, undefined);
 	return {
-		status: comment?.trim() ? "comment-submitted" : unanswered.length ? "cancelled" : "answered",
-		...(comment?.trim() || unanswered.length === 0 ? { resolvedBy: "rpc_connection" as const } : {}),
+		status: status ?? "cancelled",
+		...(status !== undefined ? { resolvedBy: "rpc_connection" as const } : {}),
 		answers,
-		comment,
 		unanswered,
 	};
 }

@@ -1,5 +1,23 @@
 # cursor-cli-oauth extension changes
 
+## 2026-10-22 - The lane is the only owner of account selection (senpi#2081)
+
+### What changed
+
+- `index.ts`: the provider registers with `ownsAccountSelection: true`, so the generic credential pool no longer wraps this lane's own account selection and failover.
+
+### Why
+
+senpi#2081: the Anthropic Subscription lane had the same shape, and there the generic pool pinned lane verdicts on outer slots and blocked them all. This lane also chooses among its stored accounts itself and ignores the outer slot.
+
+### Why an extension could not handle it
+
+This is the bundled extension's own registration.
+
+### Expected merge conflict zones
+
+- The `pi.registerProvider` object in `index.ts`.
+
 ## 2026-09-25 - The turn prompt keeps the user's request when hidden messages follow it (senpi#2139)
 
 ### What changed

@@ -168,7 +168,8 @@ function questionResponse(
 	command: ControlCommand,
 	questions: QuestionRequest["questions"],
 ): QuestionResponse | "question_incomplete" | undefined {
-	if (command.cancelled === true) return { status: "cancelled", answers: {}, unanswered: [] };
+	// Another client's cancel (the desktop's Remove) is the user's; the builtin settles it from its own draft.
+	if (command.cancelled === true) return { status: "cancelled", cancelOrigin: "user", answers: {}, unanswered: [] };
 	const answers = command.answers;
 	if (typeof answers !== "object" || answers === null || Array.isArray(answers)) return undefined;
 	const parsed: QuestionResponse["answers"] = {};

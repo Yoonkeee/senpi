@@ -2,6 +2,7 @@ import type { McpOAuthProvider } from "./auth/oauth-provider.ts";
 import type { McpServerConfig } from "./config-schema.ts";
 import type { McpElicitationUiProvider } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
+import type { ProjectMcpAuthority } from "./project-skill-policy.ts";
 
 export type ServerConnectionState =
 	| "disabled"
@@ -31,6 +32,7 @@ export type ServerConnectionToolsChangedEvent = {
 };
 
 export interface ServerConnectionOptions {
+	readonly projectPolicy?: ProjectMcpAuthority;
 	readonly credentialIdentity?: string;
 	readonly credentialsCurrent?: () => boolean;
 	readonly serverName: string;

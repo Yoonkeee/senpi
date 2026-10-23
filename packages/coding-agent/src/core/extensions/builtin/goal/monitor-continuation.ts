@@ -288,6 +288,16 @@ export class MonitorAwareGoalContinuation {
 		}
 	}
 
+	/** The continuation timer armed right now, if any (monitor backstop, user grace, provider retry). */
+	scheduledContinuation(): DelayedContinuationKind | undefined {
+		return this.#scheduledContinuationKind;
+	}
+
+	/** A system or provider recovery staged for `agent_settled`. */
+	hasStagedRecovery(): boolean {
+		return this.#pendingSystemRecovery !== undefined || this.#pendingProviderRecovery !== undefined;
+	}
+
 	/** Live resumption channels known to this generation (e.g. terminal snapshots replayed on reload). */
 	hasActiveWakeSources(): boolean {
 		return this.#activeWakeSourceCount() > 0;

@@ -156,6 +156,10 @@ jobs:
           bun-version: "1.4.3"
 
       - name: Check
+        env:
+          # Public ubuntu-latest has 16 GB RAM: cap each sequential tsc heap at 10 GiB (62.5%),
+          # leaving 6 GiB for the OS, runner, and native allocations (senpi#4022).
+          NODE_OPTIONS: --max-old-space-size=10240
         run: npm run check
 
       - name: Snapshot OS temp before tests

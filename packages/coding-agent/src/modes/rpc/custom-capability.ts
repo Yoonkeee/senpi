@@ -38,6 +38,13 @@ export const ATTENDED_CAPABILITY = "attended";
 export const MEDIA_PLACEHOLDERS_CAPABILITY = "media_placeholders";
 /** Opt-in: the client can present a multi-question `extension_ui_request{method:"question"}`. */
 export const QUESTION_CAPABILITY = "question";
+/** HOST capability: `prompt.toolBarrier` and `release_tool_barrier` are honored (senpi#3717). */
+export const TOOL_BARRIER_CAPABILITY = "tool_barrier";
+/**
+ * Both directions, like `media_placeholders`: a host advertises it in `get_protocol_info` (its sessions send
+ * `host_request` / `relocation_due`), and a client sends it in `set_client_info` to offer moving a session elsewhere.
+ */
+export const SESSION_RELOCATION_CAPABILITY = "session_relocation";
 
 /**
  * HOST capability (advertised in `get_protocol_info`, never sent by a client):
@@ -58,6 +65,8 @@ export const DETACH_CONNECTION_CAPABILITY = "detach_connection";
  * client's own `set_client_info` and fixed at that first declaration (see `connection-roles.ts`).
  */
 export const INTERACTIVE_USER_CAPABILITY = "interactive_user";
+/** The connection owns this session as a task child; only it may pause or resume the session for its run (senpi#3811). */
+export const TASK_PARENT_CAPABILITY = "task_parent";
 
 /**
  * HOST capability: this host accepts `open_session.context`, hands it to that session's

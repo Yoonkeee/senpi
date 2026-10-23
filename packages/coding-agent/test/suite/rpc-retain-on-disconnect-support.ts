@@ -80,6 +80,7 @@ export async function retainHost(options: { idleEvictionMs?: number; onRecord?: 
 				queueMicrotask(() => this.emit("exit", 0));
 				break;
 			case "cancel_ui":
+			case "cancel_grant":
 				break;
 			default: {
 				const exhaustive: never = message;

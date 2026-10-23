@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { getBaiModels } from "./generate-models-bai.ts";
 import { fetchOpenGatewayModels } from "./generate-models-opengateway.ts";
 import { applyOpenAiInputCap } from "../src/utils/openai-input-cap.ts";
+import { FABLE55_LAUNCH, isFable55ModelId } from "../src/utils/fable55-launch.ts";
 import { MODEL_SHARD_SUFFIX, importedModelShards, isPrunableModelShard } from "./model-shards.ts";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
@@ -345,6 +346,7 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
+	[FABLE55_LAUNCH.modelId]: [...FABLE55_LAUNCH.refusalFallbackModels],
 	"claude-fable-5-1": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5-5": ["claude-opus-4-8", "claude-opus-5"],
@@ -917,6 +919,7 @@ const MID_CONVO_EFFORT_UNSUPPORTED_ANTHROPIC_MODELS = new Set(["openrouter:anthr
 function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 	const id = modelId.toLowerCase().replace(/^~?anthropic\//, "");
 	return (
+		isFable55ModelId(id) ||
 		/^claude-opus-5(?:[.-]5)?(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(id) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)(?:-\d{8})?$/.test(id)
@@ -931,6 +934,7 @@ function supportsAnthropicMidConvoEffort(modelId: string): boolean {
 // whose thinking-off shape (unset + effort `low`) is valid either way.
 function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("fable-5") ||
 		modelId.includes("opus-5-5") ||
 		modelId.includes("opus-5.5") ||
@@ -943,6 +947,7 @@ function isAnthropicAdaptiveOnlyModel(modelId: string): boolean {
 
 function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		/^claude-opus-(?:4[.-]8|5(?:[.-]5)?)(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:sonnet|haiku)-5[.-]5(?:-\d{8})?$/.test(modelId) ||
 		/^claude-(?:fable|mythos)-5(?:[.-]1)?(?:-\d{8})?$/.test(modelId)
@@ -951,6 +956,7 @@ function supportsAnthropicMidConvoSystemMessages(modelId: string): boolean {
 
 function isAnthropicAdaptiveThinkingModel(modelId: string): boolean {
 	return (
+		isFable55ModelId(modelId) ||
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
@@ -2274,6 +2280,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data.anthropic.models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				if (m.status === "deprecated" && !keepDeprecatedUpstream("anthropic", modelId)) continue;
 
 				models.push({
 					id: modelId,

@@ -7,6 +7,7 @@ import { markMcpConnectionNeedsAuth } from "./health.ts";
 import { type HostMcpRegistry, shareable } from "./host-registry.ts";
 import { configureMcpConnectionLifecycle, disposeMcpConnectionLifecycle } from "./idle.ts";
 import { createMcpLogger } from "./log.ts";
+import { getProjectMcpAuthority } from "./project-skill-policy.ts";
 import { configureMcpReconnect, disposeMcpReconnect } from "./reconnect.ts";
 import type { McpConnectionEntry, McpSessionOptions } from "./service-types.ts";
 import { SharedMcpLease } from "./shared-lease.ts";
@@ -32,6 +33,7 @@ interface SessionConnectionOptions {
 
 export function createMcpSessionConnection(options: SessionConnectionOptions): McpConnectionEntry {
 	const { config, session, name, key, registry } = options;
+	const projectPolicy = getProjectMcpAuthority(config);
 	const logger = createMcpLogger(name, { logDir: session.logDir });
 	const authPlan = resolveServerAuth({
 		agentDir: session.agentDir,
@@ -42,11 +44,12 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 	});
 	for (const warning of detectLiteralBearerWarnings(name, config)) logger.warn(warning);
 	const connectionOptions = {
+		projectPolicy,
 		credentialIdentity: options.credentialIdentity,
 		credentialsCurrent: options.credentialsCurrent,
 		authProvider: authPlan.provider,
 		config,
-		env: session.env,
+		env: projectPolicy?.initial.env ?? session.env,
 		elicitationUiProvider: options.ui,
 		logger,
 		serverName: name,
@@ -88,6 +91,7 @@ export function createMcpSessionConnection(options: SessionConnectionOptions): M
 			try {
 				await entry.authPlan?.refresh?.ensureFresh();
 			} catch (error) {
+				if (entry.connection.state === "disabled") return;
 				const authError = markMcpConnectionNeedsAuth(entry.connection, error);
 				if (authError !== undefined) {
 					entry.logger.warn(authError.message);

@@ -16,6 +16,25 @@
 
 - `scripts/build-coding-agent-bundle.mjs`: the input check list and the end of `buildBundle`.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `scripts/biome/model-type-comparison.grit`: removed. The same check runs as the oxlint JS plugin `scripts/oxlint/model-type-comparison.ts` (`senpi/model-type-comparison`); it reports exactly the shapes the Grit pattern reports. The pattern itself moves to `scripts/oxlint/parity/model-type-comparison.grit`, kept only so `node scripts/oxlint-biome-parity.mjs --update` can regenerate Biome's verdicts; `scripts/oxlint-biome-parity.test.mjs` fails when any ported rule (this one, `biome-port/no-implicit-any-let` or `biome-port/no-string-case-mismatch`) flags different corpus lines than Biome 2.5.14.
+
+### Why
+
+- Biome is no longer installed (senpi#3976), so the Grit plugin cannot run.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- None expected: the Grit file is fork-only and upstream does not carry it.
+
+
 ## 2026-10-22 - The native grep probe tests never build the addon inside a CI test hook (senpi#3978)
 
 ### What changed

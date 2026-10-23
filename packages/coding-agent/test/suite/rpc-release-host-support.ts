@@ -39,7 +39,14 @@ export const heldTurn: FauxResponseStep = (_context, options) =>
 		else options?.signal?.addEventListener("abort", settle, { once: true });
 	});
 
-export async function startReleaseHost(extension: ExtensionFactory) {
+export interface ReleaseHostOptions {
+	/** Advertised by the connection that opens each session, as a desktop's `set_client_info` would. */
+	readonly capabilities?: readonly string[];
+	/** Every record, with the connection whose socket received it (`undefined`: the host's default output). */
+	readonly onRecord?: (record: WireRecord, connection: string | undefined) => void;
+}
+
+export async function startReleaseHost(extension: ExtensionFactory, options: ReleaseHostOptions = {}) {
 	const dir = await mkdtemp(join(tmpdir(), "senpi-release-host-"));
 	const cwd = join(dir, "cwd");
 	await mkdir(cwd);
@@ -83,14 +90,19 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 	const registry = new RpcSessionRegistry({ agentDir, createRuntime, closeGraceMs: 2_000 });
 	const records: WireRecord[] = [];
 	const answerWaiters = new Map<string, (record: WireRecord) => void>();
-	const receive = (line: string): void => {
+	const receive = (line: string, connection?: string): void => {
 		const record = JSON.parse(line) as WireRecord;
 		records.push(record);
+		options.onRecord?.(record, connection);
 		if (record.type === "response" && typeof record.id === "string") answerWaiters.get(record.id)?.(record);
 	};
 	const writer = new SessionEventWriter(receive);
 	// Session-scoped commands need no attachment: this connection sends them, like a gateway client.
-	writer.registerConnection("driver", { writeRaw: receive, waitForBackpressure: async () => {} });
+	const sink = (connection: string) => ({
+		writeRaw: (line: string) => receive(line, connection),
+		waitForBackpressure: async () => {},
+	});
+	writer.registerConnection("driver", sink("driver"));
 	const router = new SessionCommandRouter(registry, writer, {
 		cwd,
 		hostContext: { host_socket: join(dir, "host.sock"), host_instance: "release-test-host" },
@@ -102,7 +114,7 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 	const send = async (command: RpcCommand & { id: string }, connection = "driver"): Promise<WireRecord> => {
 		if (!connections.has(connection)) {
 			connections.add(connection);
-			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+			writer.registerConnection(connection, sink(connection));
 		}
 		const answered = new Promise<WireRecord>((resolve) => answerWaiters.set(command.id, resolve));
 		const direct = await writer.withConnection(connection, () => router.handle(command));
@@ -118,7 +130,13 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 		send,
 		async open(name: string): Promise<OpenedSession> {
 			const connection = `open-${name}`;
-			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+			writer.registerConnection(connection, sink(connection));
+			if (options.capabilities !== undefined) {
+				const capabilities = [...options.capabilities];
+				await writer.withConnection(connection, () =>
+					router.handle({ type: "set_client_info", id: `caps-${name}`, width: 80, capabilities }),
+				);
+			}
 			const id = `open-${++serial}`;
 			const sessionPath = join(dir, `${name}.jsonl`);
 			await writer.withConnection(connection, () =>
@@ -138,9 +156,26 @@ export async function startReleaseHost(extension: ExtensionFactory) {
 			await router.releaseConnection(connection);
 			return { sessionId, sessionPath: data?.state?.sessionFile ?? sessionPath, session };
 		},
-		async attach(sessionPath: string): Promise<WireRecord> {
-			const connection = `attach-${++serial}`;
-			writer.registerConnection(connection, { writeRaw: receive, waitForBackpressure: async () => {} });
+		/** Attaches `connection` (a fresh one by default); `send(command, connection)` then speaks as that client. */
+		async attach(
+			sessionPath: string,
+			connection = `attach-${serial + 1}`,
+			capabilities?: readonly string[],
+		): Promise<WireRecord> {
+			++serial;
+			if (!connections.has(connection)) {
+				connections.add(connection);
+				writer.registerConnection(connection, sink(connection));
+			}
+			if (capabilities !== undefined)
+				await writer.withConnection(connection, () =>
+					router.handle({
+						type: "set_client_info",
+						id: `caps-${connection}`,
+						width: 80,
+						capabilities: [...capabilities],
+					}),
+				);
 			const id = `attach-${serial}`;
 			const answered = new Promise<WireRecord>((resolve) => answerWaiters.set(id, resolve));
 			await writer.withConnection(connection, () =>

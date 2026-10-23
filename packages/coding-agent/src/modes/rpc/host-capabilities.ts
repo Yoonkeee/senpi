@@ -29,11 +29,14 @@ import {
 	SESSION_CONTEXT_CAPABILITY,
 	SESSION_HELD_CAPABILITY,
 	SESSION_KIND_CAPABILITY,
+	SESSION_RELOCATION_CAPABILITY,
 	SESSION_STATUS_CAPABILITY,
+	TOOL_BARRIER_CAPABILITY,
 	WARM_CAPABILITY,
 } from "./custom-capability.ts";
 import { EFFECT_LEDGER_CAPABILITY } from "./effect-record.ts";
 import { STEER_WHEN_IDLE_CAPABILITY, USER_ACTIVITY_CAPABILITY } from "./rpc-types.ts";
+import { MOVE_SESSION_CAPABILITY, MOVE_SESSION_REVOKE_CAPABILITY } from "./session-move-wire.ts";
 
 /** `unload_session` and `session_parked.reason` (senpi#3225). */
 export const UNLOAD_SESSION_CAPABILITY = "unload_session";
@@ -69,6 +72,7 @@ export function multiSessionHostCapabilities(options: {
 			EVAL_CELLS_CAPABILITY,
 			AUTH_KEY_VERIFY_CAPABILITY,
 			QUEUED_MESSAGE_REVISION_CAPABILITY,
+			TOOL_BARRIER_CAPABILITY,
 			USER_ACTIVITY_CAPABILITY,
 			// Both shared runtimes dispatch through the active session-writing holder guard.
 			SESSION_HELD_CAPABILITY,
@@ -83,6 +87,11 @@ export function multiSessionHostCapabilities(options: {
 			DETACH_CONNECTION_CAPABILITY,
 			// Only a multi-session host keeps sessions loaded that a client can ask it to free.
 			UNLOAD_SESSION_CAPABILITY,
+			// Only a multi-session host owns a move ledger and the hosted-session list export checks against.
+			MOVE_SESSION_CAPABILITY,
+			MOVE_SESSION_REVOKE_CAPABILITY,
+			// A host session asks the client that offers it to continue the session elsewhere (`host_request`).
+			SESSION_RELOCATION_CAPABILITY,
 			SESSION_CONTEXT_CAPABILITY,
 			SESSION_KIND_CAPABILITY,
 			// Only a multi-session host sees every session, so only it can stream their status.

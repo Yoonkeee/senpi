@@ -59,6 +59,7 @@ async function closeFixture() {
 				break;
 			case "close":
 			case "cancel_ui":
+			case "cancel_grant":
 				break;
 			default: {
 				const exhaustive: never = message;

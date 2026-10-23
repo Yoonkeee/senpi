@@ -1,5 +1,61 @@
 # changes — senpi-monorepo root
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `biome.json`: removed. `.oxlintrc.json` and `.oxfmtrc.json` take over, scoped to the same 6,393 files through negated ignore patterns; the tab/3/120 layout carries over through `oxfmt --migrate=biome`.
+- `package.json`: `check` runs `npm run lint` (`oxlint --deny-warnings`), `npm run fmt:check` (`oxfmt --check`) and `npm run lint:ratchet` in place of `biome check --error-on-warnings .`; `check:fix` runs `npm run fmt` and `oxlint --fix` first. `@biomejs/biome` is replaced by exact pins of `oxlint` 1.89.0, `oxfmt` 0.74.0 and `oxc-parser` 0.148.0. Every type-aware rule is set off in `.oxlintrc.json` (lint runs without `--type-aware`, so an enabled one would be skipped silently).
+
+### Why
+
+- Sisyphus Labs moved every repository to the oxc toolchain (approved 2026-10-20). The per-file ratchet stops new `any`, `@ts-` comments and non-null assertions while the existing ones are rewritten later.
+
+### Why an extension could not handle it
+
+- The lint and format toolchain runs before any agent code exists.
+
+### Expected merge conflict zones
+
+- The `check` script chain and root `devDependencies` in `package.json`. Upstream pi-mono still uses Biome: on a sync, keep this repository's oxc scripts and pins and do not restore `biome.json`.
+
+
+## 2026-10-22 - hono and @hono/node-server overrides for GHSA-5r4p-p66f-jhc7 and GHSA-rmxm-3fg6-px4f
+
+### What changed
+
+- `package.json`: the root `overrides` block moves `hono` from 4.13.8 to 4.13.11 and `@hono/node-server` from 2.1.1 to 2.1.3; `package-lock.json`, `bun.lock` and the coding-agent install lock resolve both versions.
+
+### Why
+
+- GHSA-5r4p-p66f-jhc7 (`hono`) and GHSA-rmxm-3fg6-px4f (`@hono/node-server`), both moderate: `serveStatic` decoded the request path twice, so middleware guarding static paths could be bypassed. `hono` and `@hono/node-server` each ship a `serveStatic`, and both arrive through the `@modelcontextprotocol/sdk` subtree the fork does not declare, so both pins move.
+
+### Why an extension could not handle it
+
+- Dependency resolution is read by the package manager before any extension is loaded.
+
+### Expected merge conflict zones
+
+- The root `overrides` block in `package.json` and the matching lockfile entries, if another override bump lands first.
+
+## 2026-10-21 - Quarantine the agent dir for every test process (senpi#3867)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`, `packages/senpi-codemode/vitest.config.ts`: each calls `quarantineVitestAgentDir()` (fork-only `scripts/vitest-agent-dir-quarantine.mjs`) before its config is built. A Vitest run that `scripts/run-tests.mjs` did not already quarantine (the codemode gate calls Vitest directly) gets a temp `SENPI_CODING_AGENT_DIR` under `tmpdir()`. Every inherited `*_CODING_AGENT_DIR` lane is dropped, `SENPI_TEST_AGENT_DIR_GUARD=1` arms the guard for that process tree, and the dir is removed on exit. `scripts/run-tests.mjs` applies the same helper (fork-only `scripts/test-agent-dir.mjs`) to each run's owned temp root. The shared `vitest.base.ts` is untouched, because the evals configs import it and must read the real agent dir.
+
+### Why
+
+- senpi#3867: `getAgentDir()` throws in a senpi test run when it resolves the real agent dir. Kernels, compiled binaries and other children that tests spawn inherited no quarantined dir, so they resolved, and could write, the real one.
+
+### Why an extension could not handle it
+
+- Test-process environment is fixed before any agent code or extension loads.
+
+### Expected merge conflict zones
+
+- The import block and the line before `export default mergeConfig(` in both `vitest.config.ts` files.
+
 ## 2026-10-17 - Pin TypeScript type roots to the repository (senpi#3482)
 
 ### What changed

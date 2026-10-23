@@ -1,3 +1,63 @@
+## 2026-10-21 - A user Stop pauses the goal with the session (senpi#3811)
+
+### What changed
+
+- `index.ts`: a user-aborted turn while the session holds a `session_hold` (a user Stop) sets the goal to `paused` and records `goal-stop-paused`; a plain interrupt with no Stop still blocks it with `user interrupted the turn`. At the next `agent_end` after the Stop is released (a human message or Resume), a goal the Stop paused becomes `active` again and records `goal-stop-resumed`.
+- `stop-pause.ts`: reads the session's holds through `ctx.getPauseState()` and the two markers. A goal paused with `/goal pause` never resumes this way.
+
+### Why
+
+After a Stop the goal ended blocked, so resuming the session did not resume the goal. Stop now pauses the work as a whole and a message or Resume continues it.
+
+### Why an extension could not handle it
+
+This is the goal builtin; it uses the public `ctx.getPauseState()` added in the same change.
+
+### Expected merge conflict zones
+
+The two `user interrupted the turn` branches (`agent_end`, `session_abort`) in `index.ts`.
+
+## 2026-10-22 - heldBy names the turn's own stop first (senpi#3900, part)
+
+### What changed
+
+- `turn-end-liveness.ts` `heldReason`: when a person's queued message releases a hold, `waiting{on, heldBy}` now names the turn's own stop first (a deadline stop, then a user abort) and only then the session-wide hold-ledger kind. The `ledger-hold` row (`held{<kind>}`, no person input queued) is unchanged, and so is the wire shape (`heldBy?: HeldReason`).
+
+### Why
+
+`heldBy` is a single diagnostic value; the lifecycle consumer (senpi#3864) asked that the turn's own stop win, since that is the stop the person is reacting to. The other half of senpi#3900 (report `waiting` only when the engine will actually start a turn from the queued input, e.g. not after a user abort) is still open there.
+
+### Expected merge conflict zones
+
+- `turn-end-liveness.ts`: `heldReason`.
+
+## 2026-10-21 - Turn-end liveness verdict (#3863)
+
+### What changed
+
+- `turn-end-liveness.ts` (new): pure `evaluateTurnEndLiveness` returns `continuing | held | waiting | done | stalled` from what the goal lane and the todo-owed backstop just did, plus `classifyTurnEnd` over the existing terminal-error helpers. The decision is one ordered table, `TURN_END_RULES` (first match wins; the last row always matches): retry -> `continuing{retry}`; an active hold-ledger kind (senpi#3860, read through the optional `ctx.engineTurnsHeld`, probed structurally until that API lands on main) -> `held{<kind>}` regardless of child or monitor wakes, unless a person's own queued message is the input that releases it, which then reads `waiting{on, heldBy:<kind>}`. The session tags each queued entry when it is enqueued (`ctx.hasQueuedPersonInput()`): a TUI submit, an RPC client `prompt`/`steer`/`follow_up` (how desktop input arrives) and an answered question count as a person's, and the answer comes from the entries queued now, so a message removed unsent no longer counts. Anything an extension or the engine sends (Stop hook, loop tick, a timed-out question) is `pending-messages` and stays held; queued continuation -> `continuing`; print/json -> `held{non-interactive}`; a wake that will deliver a turn -> `waiting{on, heldBy?}`; a stop that waits for a person (deadline stop, user abort, child session, paused/blocked goal) -> `held`; provider error / policy rejection -> `stalled{provider-error, retryAtMs?}`; system / provider / unknown abort -> `stalled{aborted, abortSource?}`; open work with a spent guard -> `stalled{budget}`; open work -> `stalled{no-wake}`; else `done`. `effectiveWakes` drops the goal lane's own timer and staged recovery during a deadline stop (the hold is read only by the goal lane, so monitors, background work, child tasks and queued messages still deliver) and drops a trailing question on a turn that did not complete. Only a completed turn with nothing open is `done`. An identical stall (reason, reset time, abort source) since the last user message is not written again.
+- `index.ts`: the `agent_end` tail calls `reportTurnEndLiveness` after both lanes ran, which publishes `turn_end_liveness` through `publishGoalContinuationEvent` (bus + RPC), and appends a `turn-end-liveness` entry only for `stalled`.
+- `turn-end-liveness-report.ts` (new): `collectTurnEndLivenessInput` (the one input collector, exported for lifecycle consumers) and `reportTurnEndLiveness`, so `index.ts` only calls it.
+- `monitor-continuation.ts`: read-only `scheduledContinuation()` and `hasStagedRecovery()` getters. No scheduling change.
+- `todo-owed-backstop.ts`: `afterAgentEnd` returns its outcome (`delivered | capped | <suppression>`); `calledAskUser` is exported. No behavior change.
+
+### Why
+
+- Both lanes already decided whether something would re-enter the session, but only privately. RPC clients, the desktop app and pane watchdogs could not tell a healthy wait from a stall, and a no-goal turn that ended on a usage limit left no resume point. The verdict adds no budget and starts or suppresses nothing; the existing caps (8 consecutive, 60 without progress, 2 todo nudges per chain) stay the only bounds.
+
+### Follow-up
+
+- The hold ledger is read live through `ctx.engineTurnsHeld()` (#3860), which today reports only that a hold is active, so every active hold reads `held{unattended}`. A follow-up after #3860 reads `ctx.engineTurnHolds()` to report each kind (`session_hold`, `run_fence`, `inherited_hold` from #3811). No start-time snapshot is kept, since it would go stale when input or Resume releases the hold.
+
+### Design credit
+
+The idea of a turn-end liveness check is inspired by dinobot by roach (github.com/dinobot-labs/dinobot, PolyForm Noncommercial 1.0.0). No dinobot code, tests or prompt text were used; this is an independent implementation for senpi's goal and wake-source architecture.
+
+### Expected merge conflict zones
+
+- LOW: the `agent_end` tail and `session_start` head in `index.ts`; the `afterAgentEnd` return statements in `todo-owed-backstop.ts`.
+
+
 ## 2026-10-21 - Revalidate held goal continuations before charging (senpi#3853)
 
 ### What changed

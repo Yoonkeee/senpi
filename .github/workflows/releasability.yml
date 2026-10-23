@@ -42,7 +42,7 @@ jobs:
         with:
           bun-version: "1.4.3"
 
-      # `npm run check` is read-only (#1443): its biome invocation reports format
+      # `npm run check` is read-only (#1443): its `oxfmt --check` step reports format
       # drift instead of silently rewriting it, so the gate can fail here.
       - name: Check
         run: npm run check

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { signalGroup } from "./package-manager.mjs";
+import { quarantineAgentDirEnv } from "./test-agent-dir.mjs";
 import { reportTempLeaks, tempEntries } from "./test-temp-guard.mjs";
 
 const [runner, ...args] = process.argv.slice(2);
@@ -39,7 +40,7 @@ try {
 	child = spawn(entry ? process.execPath : runner, entry ? [entry, ...args] : args, {
 		stdio: "inherit",
 		detached: process.platform !== "win32",
-		env: { ...process.env, TMPDIR: root, TEMP: root, TMP: root, JITI_RESPECT_TMPDIR_ENV: "1" },
+		env: { ...quarantineAgentDirEnv(process.env, root), TMPDIR: root, TEMP: root, TMP: root, JITI_RESPECT_TMPDIR_ENV: "1" },
 	});
 	process.exitCode = await new Promise((resolve, reject) => {
 		child.once("error", reject);

@@ -16,6 +16,24 @@
 
 - `packages/coding-agent/src/core/compaction/compaction.ts`: `findProjectedCutPoint` metadata backup and split-turn classification.
 
+## 2026-10-21 - Compaction reads request context instead of query billing (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `calculateContextTokens` prefers the latest request's input-plus-output measurement. An explicit unknown measurement returns zero so transcript estimation supplies context; absent retains the legacy usage contract.
+
+### Why
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: the SDK bills overlapping internal requests cumulatively. Treating the sum as occupied context doubled percentages and triggered false compaction thresholds.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: core mechanics supply the common calculation to session display, RPC, admission, and extension policy; changing only one extension would leave other consumers wrong.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/compaction/compaction.ts`, `calculateContextTokens`. Keep the additive request snapshot preference ahead of upstream's legacy fallback.
+
 ## 2026-10-11 - Preserve cache-friendly summary hook identity (senpi#3125 delta)
 
 ### What changed
@@ -787,3 +805,21 @@ If upstream changes branch summary preparation or adds new branch summary data s
 ### Expected merge conflict zones
 
 - MEDIUM: `generateBranchSummary` option plumbing and the `streamSimple`/`streamFn` call.
+
+## 2026-10-23 - Bound the core summarizer input to the model window (senpi#4032)
+
+### What changed
+
+- `packages/coding-agent/src/core/compaction/compaction.ts`: `generateSummaryWithUsage`, on the standalone (non cache-friendly) path, bounds the serialized history with the builtin compaction's rule when the request would not fit the window: `boundSummarizationInput` (0.6 of the window, oldest messages first; the newest message is kept if bounding would leave nothing), and on a provider context overflow it retries with `shrinkSummarizationInputForOverflowRetry` under `allowOverflowRetry`, throwing `SummarizationOverflowExhaustedError` when exhausted. A request that already fits is sent unchanged. When bounding or the shrink-retry drops the oldest history, the summarized conversation opens with `<omitted-history messages="N" />`, so the summary records the gap rather than losing it silently; the fit check counts the summarization system prompt and the request wrappers too.
+
+### Why
+
+- The core summarizer summarized every message it compacts in one unbounded request. After an overflow, or for a required pre-prompt compaction, that history is close to the window by construction, so the summary request overflowed the same window and the compaction (and with it overflow recovery) could never succeed.
+
+### Why an extension could not handle it
+
+- The summary request is built and sent inside core `generateSummaryWithUsage`; `session_before_compact` can replace the whole compaction but cannot bound core's own request.
+
+### Expected merge conflict zones
+
+- MEDIUM: `generateSummaryWithUsage` around the prompt build and `completeSummarization` call (now a bounded retry loop), and the `overflow-retry.ts` import.

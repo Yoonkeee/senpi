@@ -1,3 +1,39 @@
+## 2026-10-20 - Share the MCP environment grants store (senpi#3796)
+
+### What changed
+
+- `packages/coding-agent/package.json`: exports `./mcp-env-grants`, a self-contained atomic grants writer, snapshot reader and observer. The module documents the schema and exports the configured-directory resolver and declaration digest.
+
+### Why
+
+Native and legacy engines must read and revoke the same names-only grants with the same canonical identity hash.
+
+### Why an extension could not handle it
+
+The shared module must ship as a public engine package entry without importing the native runtime.
+
+### Expected merge conflict zones
+
+- `packages/coding-agent/package.json`: the exports map.
+
+## 2026-10-21 - Coding-agent unit tests quarantine the agent dir in their Vitest config (senpi#3869)
+
+### What changed
+
+- `packages/coding-agent/vitest.config.ts`: calls `quarantineVitestAgentDir()` (fork-only `scripts/vitest-agent-dir-quarantine.mjs`) before building the config, so a Vitest run not started by `scripts/run-tests.mjs` still gives every worker and spawned child a temp `SENPI_CODING_AGENT_DIR` and arms `SENPI_TEST_AGENT_DIR_GUARD=1`.
+
+### Why
+
+- senpi#3867/#3869: the guard refuses the real agent dir in senpi test runs. The quarantine lives in the unit config, not the shared `vitest.base.ts`, which the evals configs import and which the evals Docker image ships alone.
+
+### Why an extension could not handle it
+
+- Test-process environment is fixed before any agent code or extension loads.
+
+### Expected merge conflict zones
+
+- LOW: the import block and the line before `export default mergeConfig(`.
+
 ## 2026-10-18 - The workspace build never emits test files (senpi#3576)
 
 ### What changed

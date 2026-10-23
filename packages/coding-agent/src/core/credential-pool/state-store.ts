@@ -130,16 +130,18 @@ export class CredentialSlotRepository {
 		fn: (document: CredentialPoolStateDocument) => { result: T; next?: CredentialPoolStateDocument },
 	): Promise<T> {
 		if (!existsSync(this.path)) mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
-		const release = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
+		const lock = await acquireStateFileLock(this.path, this.lockWaitBudgetMs);
 		try {
 			const stored = parseDocument(readStateFile(this.path));
 			const document = stored ?? freshDocument();
 			const { result, next } = fn(document);
-			if (next !== undefined || stored === undefined)
+			if (next !== undefined || stored === undefined) {
+				lock.assertHeld();
 				await writeStateFileAtomic(this.path, serialize(next ?? document));
+			}
 			return result;
 		} finally {
-			await release();
+			await lock.release();
 		}
 	}
 
@@ -179,6 +181,21 @@ export class CredentialSlotRepository {
 	async listSlots(providerId: string, laneId: string): Promise<Record<string, CredentialSlotState>> {
 		const document = await this.readDocument();
 		return { ...document.providers[providerId]?.lanes[laneId]?.slots };
+	}
+
+	/**
+	 * Drops every health entry recorded for a provider and reports whether there was one. A clean
+	 * file is only read, never locked or written. Used when a provider's own lane becomes the only
+	 * owner of its account selection, so health the generic pool recorded earlier (often a block
+	 * pinned on the wrong account) cannot outlive the change (senpi#2081).
+	 */
+	async clearProvider(providerId: string): Promise<boolean> {
+		if ((await this.readDocument()).providers[providerId] === undefined) return false;
+		return this.withDocument((document) => {
+			if (document.providers[providerId] === undefined) return { result: false };
+			const { [providerId]: _retired, ...providers } = document.providers;
+			return { result: true, next: { ...document, providers } };
+		});
 	}
 
 	/**

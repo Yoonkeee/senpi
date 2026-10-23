@@ -1,3 +1,4 @@
+import { ACCOUNT_POOL_REFUSAL_NOTE } from "../../../credential-pool/classify.ts";
 import type { PinSource, UnavailableAccount } from "./affinity.ts";
 import type { SdkErrorKind } from "./errors.ts";
 import type { ClaudeCodeRun } from "./executable.ts";
@@ -21,9 +22,9 @@ export function noAccountGuidance(hasAnthropicCredential: boolean): string {
 
 export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined, blockReason?: "auth_error"): string {
 	if (blockReason === "auth_error") {
-		// omo#8383: name the authentication failure. The recovery is a re-login,
-		// and the outer credential-pool classifier maps "authentication error" to
-		// auth_error instead of laundering the block into a rate-limit cooldown.
+		// omo#8383: name the authentication failure; the recovery is a re-login. Only a pool whose every
+		// account is auth-blocked says so (senpi#2081), and the outer credential pool reads the refusal note
+		// instead of these words, so the verdict is never pinned on whichever outer slot ran the attempt.
 		const recheck =
 			soonestUnblockAt !== undefined && Number.isFinite(soonestUnblockAt)
 				? [`  Next automatic re-check: ${new Date(soonestUnblockAt).toISOString()}.`]
@@ -33,6 +34,7 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 			...recheck,
 			`  /login ${PROVIDER}  - re-authenticate to refresh the blocked account`,
 			`  /claude-account list  - inspect account states`,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	const eta =
@@ -44,6 +46,7 @@ export function allAccountsBlockedGuidance(soonestUnblockAt: number | undefined,
 		`  Soonest automatic retry: ${eta}.`,
 		`  /claude-account list  - inspect account states`,
 		`  /login ${PROVIDER}  - add another account`,
+		ACCOUNT_POOL_REFUSAL_NOTE,
 	].join("\n");
 }
 
@@ -69,10 +72,8 @@ function switchAccountLine(pinnedBy: PinSource | undefined): string {
 /**
  * With account fallback off, only one account may serve (senpi#3465), so the pool-wide advice is wrong:
  * other accounts may be healthy, and adding one does not help because it is never used. Name the account
- * and the remedies that do work. For a blocked account the cause words ("authentication error", "rate
- * limit") stay, so the outer credential-pool classifier reads the same verdict as for the pool-wide
- * guidance. An account that is not configured carries neither on purpose: no cooldown brings it back, so
- * the classifier fails the request instead of rotating (senpi#3672).
+ * and the remedies that do work. Every variant carries the refusal note, so the outer credential pool
+ * fails the request instead of blocking the outer slot it ran on (senpi#2081, senpi#3672).
  */
 export function singleAccountUnavailableGuidance(
 	account: UnavailableAccount,
@@ -88,6 +89,7 @@ export function singleAccountUnavailableGuidance(
 				: `  /claude-account pin <name>  - pin a configured account (or /claude-account unpin)`,
 			"  Start a new session if this session's account was removed.",
 			ENABLE_ACCOUNT_FALLBACK,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	const until =
@@ -102,6 +104,7 @@ export function singleAccountUnavailableGuidance(
 			...(until === undefined ? [] : [`  Next automatic re-check: ${until}.`]),
 			switchAccountLine(account.pinnedBy),
 			ENABLE_ACCOUNT_FALLBACK,
+			ACCOUNT_POOL_REFUSAL_NOTE,
 		].join("\n");
 	}
 	return [
@@ -109,6 +112,7 @@ export function singleAccountUnavailableGuidance(
 		...(until === undefined ? [] : [`  Wait until ${until}, when this account can serve again.`]),
 		switchAccountLine(account.pinnedBy),
 		ENABLE_ACCOUNT_FALLBACK,
+		ACCOUNT_POOL_REFUSAL_NOTE,
 	].join("\n");
 }
 

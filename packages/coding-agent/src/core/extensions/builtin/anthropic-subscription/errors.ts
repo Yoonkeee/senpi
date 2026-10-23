@@ -146,6 +146,9 @@ function classifyErrorKind(error: unknown): SdkErrorClassification {
 		return { kind: "rate_limit", retryable: true };
 	}
 	if (/\b(?:http\s*)?529\b|overloaded/.test(text)) return { kind: "overloaded", retryable: true };
+	// A server, gateway or timeout status is the provider's fault even when its body echoes "unauthorized":
+	// only a 401 is a rejected token, so this must not become an auth block (senpi#2081).
+	if (/\bhttp\s*(?:408|5\d\d)\b/.test(text)) return { kind: "other", retryable: true };
 	if (/\binvalid_grant\b|\binvalid_token\b|\b(?:http\s*)?401\b|\bunauthorized\b/.test(text)) {
 		return { kind: "auth_error", retryable: true };
 	}

@@ -1,3 +1,26 @@
+## 2026-10-22 - All-accounts refusals are pool verdicts, not auth failures (senpi#2081)
+
+### What changed
+
+- `index.ts`: the provider registers with `ownsAccountSelection: true`, so the generic credential pool no longer wraps the lane. This lane is the one owner of account selection, keeping the pin, the resident account, account order, and per-account and per-model limits.
+- `affinity.ts`: `AllAccountsBlockedError.blockReason` is `auth_error` only when every candidate is auth-blocked. A pool where any account waits on a deadline reports that deadline as a temporary block.
+- `guidance.ts`: every all-accounts and single-account refusal ends with the credential pool's `ACCOUNT_POOL_REFUSAL_NOTE`, so the outer pool fails the request instead of blocking the outer slot that ran the attempt.
+- `errors.ts`: an `HTTP 408` or `HTTP 5xx` result is a transient failure even when its text says "unauthorized".
+
+### Why
+
+senpi#2081: a mixed pool (one revoked account, one briefly rate-limited) was reported as an authentication error, persisted as `auth_error` on every outer slot, and refused all requests until a re-login.
+
+### Why an extension could not handle it
+
+This is the bundled Anthropic Subscription extension itself; the outer pool reads its refusal text before any hook runs.
+
+### Expected merge conflict zones
+
+- The `blockReason` argument at the end of `selectAccount`.
+- The closing lines of `allAccountsBlockedGuidance` and `singleAccountUnavailableGuidance`.
+- The transient branches near the end of `classifyErrorKind`.
+
 ## 2026-10-22 - A damaged seat-digest salt is replaced (oh-my-openagent#10304 follow-up)
 
 ### What changed
@@ -42,6 +65,48 @@ The continuity decision and its observation are internal to this builtin.
 - `session-observability.ts`: `ContinuityObservation` and `emitContinuityObservation`;
 - `session-stream.ts`: the imports, the top of `createResidentAttempt` and the `stageContinuityDecision` call;
 - `seat-digest.ts` is new.
+
+## 2026-10-21 - Launch-gated Fable 5.5 executable floor (senpi#3893)
+
+### What changed
+
+- `executable-model-support.ts`: reads the optional launch model's Claude Code floor from the one `FABLE55_LAUNCH` block. The floor stays unset until observed; no version is guessed.
+- The real-binary regression checks the launch chain key from the moment `released` is flipped, because the key exists only then; before release the default chains contain no 5.5 key at all. Every existing promoted model and every recovery rung remains checked.
+- Existing family-wide adaptive/xhigh markers in `options.ts` already cover Fable/Mythos 5.5; the usage-credit classifier is not a per-version allowlist. Focused tests verify the new model remains a non-retryable entitlement rather than an account-wide rate limit. The broader classification design in #3752 remains separate.
+
+### Why
+
+- Prepare launch support without falsely declaring that today's Claude Code supports an unreleased model.
+
+### Why an extension could not handle it
+
+- This builtin owns its executable support evidence and subscription request policy.
+
+### Expected merge conflict zones
+
+- `executable-model-support.ts`: imports and the optional floor entry.
+
+## 2026-10-21 - Separate request context from query billing (omo#10792)
+
+### What changed
+
+- `stream-protocol.ts`: usage updates distinguish a new request, a request delta, and cumulative query billing. A request start clears omitted counters; request updates set `Usage.contextUsage`, and terminal billing updates leave that measurement intact. Outputs start with an explicitly unknown context measurement.
+- `stream-events.ts`: routes `message_start` and `message_delta` through their respective request scopes.
+- `stream.ts`: SDK assistant snapshots supply request usage only when partial events are absent; their placeholder output counts never overwrite streamed output. Successful and failed terminal results still update all billing counters and costs.
+
+### Why
+
+The SDK may make more than one model request inside one senpi turn. Its terminal `result.usage` sums those requests, so replacing request usage with that sum doubled context and falsely triggered compaction. A result-only stream cannot provide a measured context, so it now falls back to transcript estimation rather than presenting billing as context. First-response identity remains unchanged for downstream transcript deduplication.
+
+The SDK's [cost-tracking contract](https://code.claude.com/docs/en/agent-sdk/cost-tracking) documents that assistant snapshots have accurate input/cache counts but placeholder output counts. Without partial events the snapshot therefore measures prompt context, not a complete output-token count; cumulative terminal output must not be substituted for it.
+
+### Why an extension could not handle it
+
+This is the builtin provider's own SDK boundary. The shared optional usage field is required because billing and context readers must retain different values through the same persisted message.
+
+### Expected merge conflict zones
+
+`stream-protocol.ts` usage mapping, `stream-events.ts` request boundaries, and `stream.ts` assistant/result branches. These are fork-only paths.
 
 ## 2026-10-20 - Native-1M models are requested by their plain id; only legacy ids use the [1m] opt-in (senpi#3801)
 

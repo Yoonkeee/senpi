@@ -37,6 +37,7 @@ import { getFileContentRevision, normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
 import { migrateAnthropicOAuthToSubscription } from "./anthropic-oauth-migration.ts";
 import { migrateLegacyProviderKeys } from "./auth-provider-key-migration.ts";
+import { lockWithLossHandling } from "./file-lock.ts";
 import {
 	CredentialStoreBusyError,
 	FILE_STORAGE_LOCK_OPTIONS,
@@ -264,10 +265,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		// whole budget, and `onCompromised` is rebound per attempt.
 		while (true) {
 			try {
-				const release = await lockfile.lock(this.authPath, {
+				const { release } = await lockWithLossHandling(this.authPath, {
 					...FILE_STORAGE_LOCK_OPTIONS,
 					retries: 0,
-					onCompromised,
+					onLost: onCompromised,
 				});
 				if (signal?.aborted) {
 					await release();

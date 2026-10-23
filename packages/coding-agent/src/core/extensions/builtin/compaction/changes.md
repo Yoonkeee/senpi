@@ -19,6 +19,24 @@
 
 - `context-reduction-frontier.ts`: `reducePrefix` and every return after `state.engaged = true`.
 
+## 2026-10-21 - Reduction anchors use request context (omo#10792)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: anchors use an explicit request measurement rather than cumulative billing. Unknown measurements do not establish an anchor; legacy usage keeps its prompt-only calculation.
+
+### Why
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: an inflated anchor can trigger false context pressure after later projection. The request snapshot's input preserves the prompt-only anchor without subtracting cumulative output or double-counting output in later growth.
+
+### Why an extension could not handle it
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`: this is the builtin's own reduction bookkeeping.
+
+### Expected merge conflict zones
+
+- LOW: `packages/coding-agent/src/core/extensions/builtin/compaction/context-reduction-lifecycle.ts`, the `message_end` usage anchor.
+
 ## 2026-10-21 - Preserve prefix cache keys during remote compaction (omo#10775)
 
 ### What changed
@@ -2229,6 +2247,7 @@ untouched. Expected upstream conflict zones: `builtin/compaction/speculative.ts`
 ### Expected merge conflict zones
 
 - LOW: `lane-policy.ts` `LaneContext` and `disablesSenpiCompaction()` provider-scoping logic.
+
 ## 2026-10-10 - Recover unsafe newest entries without retrying identical rejections (senpi#3060)
 
 ### What changed
@@ -2300,6 +2319,7 @@ This is private state and request-assembly policy inside the owning builtin comp
 - `context-reduction-frontier.ts` around initial engagement and failed cut admission.
 - `context-pipeline.ts` around emergency-prune budgeting and handoff detection.
 - `context-reduction-state.ts` around request usage anchors.
+
 ## 2026-10-11 - Summarize away from spent accounts (senpi#3131)
 
 ### What changed
@@ -2318,3 +2338,22 @@ This is the builtin extension that owns summary generation and native routing.
 ### Expected merge conflict zones
 
 Summary auth/snapshot setup in `speculative.ts` and native-compaction gates in `index.ts`.
+
+## 2026-10-22 - Overflow retries use the summary model's window (senpi#830)
+
+### What changed
+
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: a configured summary model with no credentials at request time (kept while availability was unknown) falls back to the session model instead of failing the summary, so compaction is never disabled by the override.
+- `packages/coding-agent/src/core/extensions/builtin/compaction/speculative.ts`: overflow detection and the overflow-retry input shrink use the request snapshot's context window, which is the selected summary model's window, instead of the session model's.
+
+### Why
+
+With `compaction.model` now honoured on healthy sessions (senpi#830), the summary model often differs from the session model. A smaller summary window could let a silent overflow (input above the window without a provider error) go undetected, and retries shrank toward the wrong budget.
+
+### Why an extension could not handle it
+
+This is the builtin extension that owns summary generation and its retry loop.
+
+### Expected merge conflict zones
+
+The overflow branches of the retry loop in `runExtensionCompaction` in `speculative.ts`.

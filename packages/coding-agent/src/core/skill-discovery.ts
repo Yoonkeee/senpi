@@ -1,6 +1,22 @@
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import {
+	closeSync,
+	existsSync,
+	fstatSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	realpathSync,
+	statSync,
+} from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	type SkillAllowedSet,
+	type SkillProvenance,
+} from "./skill-access.ts";
 
 /** Bytes read before falling back to the rest of SKILL.md when the closing --- is absent. */
 export const SKILL_FRONTMATTER_PREFIX_BYTES = 8192;
@@ -13,6 +29,12 @@ const FRONTMATTER_CLOSE_CR = Buffer.from("\r---");
 type IgnoreMatcher = ReturnType<typeof ignore>;
 
 export type SkillDiscoveryMode = "pi" | "agents";
+export interface SkillWalkOptions {
+	readonly provenance?: SkillProvenance;
+	readonly allowedSet?: SkillAllowedSet;
+	readonly ancestry?: ReadonlySet<string>;
+	readonly onDirectory?: (path: string) => void;
+}
 
 function toPosixPath(p: string): string {
 	return p.split(sep).join("/");
@@ -125,9 +147,24 @@ export function collectSkillEntries(
 	mode: SkillDiscoveryMode,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
+	options: SkillWalkOptions = {},
 ): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
+	let canonical: string;
+	try {
+		authorizeSkillPath(dir, options.provenance, options.allowedSet, true);
+		canonical = realpathSync.native(dir);
+	} catch (error) {
+		// Leave a blocked root as a candidate so the resource loader retains its
+		// provenance and produces the visible diagnostic without descending here.
+		if (error instanceof BlockedSkillLinkError) return [dir];
+		canonical = resolve(dir); // Embedded/user assets retain descriptorless discovery.
+	}
+	if (options.ancestry?.has(canonical)) return entries;
+	const ancestry = new Set(options.ancestry);
+	ancestry.add(canonical);
+	options.onDirectory?.(dir);
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
@@ -189,7 +226,7 @@ export function collectSkillEntries(
 			if (!isDir) continue;
 			if (ig.ignores(`${relPath}/`)) continue;
 
-			entries.push(...collectSkillEntries(fullPath, mode, ig, root));
+			entries.push(...collectSkillEntries(fullPath, mode, ig, root, { ...options, ancestry }));
 		}
 	} catch {
 		// Ignore errors
@@ -198,6 +235,6 @@ export function collectSkillEntries(
 	return entries;
 }
 
-export function collectAutoSkillEntries(dir: string, mode: SkillDiscoveryMode): string[] {
-	return collectSkillEntries(dir, mode);
+export function collectAutoSkillEntries(dir: string, mode: SkillDiscoveryMode, options?: SkillWalkOptions): string[] {
+	return collectSkillEntries(dir, mode, undefined, undefined, options);
 }

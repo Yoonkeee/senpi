@@ -1,10 +1,21 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import { homedir } from "node:os";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
+import {
+	authorizeSkillPath,
+	BlockedSkillLinkError,
+	buildSkillAllowedSet,
+	insideSkillRoot,
+	readSkillFileChecked,
+	type SkillAllowedSet,
+	type SkillProvenance,
+	skillProjectRoot,
+} from "./skill-access.ts";
 import { readSkillMarkdownSource, shouldSkipSkillWalkDirectoryName } from "./skill-discovery.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
@@ -87,6 +98,9 @@ export interface Skill {
 	argumentHint?: string;
 	/** `requires-arguments` frontmatter; defaults to true when a hint is declared, else false. */
 	requiresArguments?: boolean;
+	/** Root authority is retained for invocation and sidecar reads. */
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
 }
 
 export interface LoadSkillsResult {
@@ -140,6 +154,8 @@ export interface LoadSkillsFromDirOptions {
 	dir: string;
 	/** Source identifier for these skills */
 	source: string;
+	provenance?: SkillProvenance;
+	allowedSet?: SkillAllowedSet;
 }
 
 function createSkillSourceInfo(filePath: string, baseDir: string, source: string): SourceInfo {
@@ -176,7 +192,12 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
-	return loadSkillsFromDirInternal(dir, source, true);
+	const provenance = options.provenance ?? {
+		kind: source === "project" ? "project-auto" : "user",
+		selectedRoot: dir,
+		projectRoot: skillProjectRoot(dir),
+	};
+	return loadSkillsFromDirInternal(dir, source, true, undefined, undefined, provenance, options.allowedSet);
 }
 
 function loadSkillsFromDirInternal(
@@ -185,6 +206,9 @@ function loadSkillsFromDirInternal(
 	includeRootFiles: boolean,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
+	provenance?: SkillProvenance,
+	allowedSet?: SkillAllowedSet,
+	ancestry: ReadonlySet<string> = new Set(),
 ): LoadSkillsResult {
 	const skills: Skill[] = [];
 	const diagnostics: ResourceDiagnostic[] = [];
@@ -192,6 +216,17 @@ function loadSkillsFromDirInternal(
 	if (!existsSync(dir)) {
 		return { skills, diagnostics };
 	}
+	let canonical: string;
+	try {
+		authorizeSkillPath(dir, provenance, allowedSet, true);
+		canonical = realpathSync.native(dir);
+	} catch (error) {
+		if (error instanceof BlockedSkillLinkError) return { skills, diagnostics: [error.diagnostic] };
+		canonical = resolve(dir);
+	}
+	if (ancestry.has(canonical)) return { skills, diagnostics };
+	const descendants = new Set(ancestry);
+	descendants.add(canonical);
 
 	const root = rootDir ?? dir;
 	const ig = ignoreMatcher ?? ignore();
@@ -221,7 +256,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source);
+			const result = loadSkillFromFile(fullPath, source, provenance, allowedSet);
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -257,7 +292,16 @@ function loadSkillsFromDirInternal(
 			}
 
 			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root);
+				const subResult = loadSkillsFromDirInternal(
+					fullPath,
+					source,
+					false,
+					ig,
+					root,
+					provenance,
+					allowedSet,
+					descendants,
+				);
 				skills.push(...subResult.skills);
 				diagnostics.push(...subResult.diagnostics);
 				continue;
@@ -267,7 +311,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			const result = loadSkillFromFile(fullPath, source);
+			const result = loadSkillFromFile(fullPath, source, provenance, allowedSet);
 			if (result.skill) {
 				skills.push(result.skill);
 			}
@@ -281,14 +325,20 @@ function loadSkillsFromDirInternal(
 function loadSkillFromFile(
 	filePath: string,
 	source: string,
+	provenance?: SkillProvenance,
+	allowedSet?: SkillAllowedSet,
 ): { skill: Skill | null; diagnostics: ResourceDiagnostic[] } {
 	const diagnostics: ResourceDiagnostic[] = [];
 	const isDeclaredSkill = basename(filePath) === "SKILL.md";
 
 	let rawContent: string;
 	try {
-		rawContent = readSkillMarkdownSource(filePath);
+		rawContent =
+			provenance === undefined || provenance.kind === "user"
+				? readSkillMarkdownSource(filePath)
+				: readSkillFileChecked(filePath, provenance, allowedSet);
 	} catch (error) {
+		if (error instanceof BlockedSkillLinkError) return { skill: null, diagnostics: [error.diagnostic] };
 		const message = error instanceof Error ? error.message : "failed to read skill file";
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
@@ -341,6 +391,8 @@ function loadSkillFromFile(
 	return {
 		skill: {
 			name,
+			provenance,
+			allowedSet,
 			description,
 			filePath,
 			baseDir: skillDir,
@@ -362,6 +414,8 @@ export interface LoadSkillsOptions {
 	skillPaths: string[];
 	/** Include default skills directories. */
 	includeDefaults: boolean;
+	provenanceByPath?: ReadonlyMap<string, SkillProvenance>;
+	userSkillRoots?: readonly string[];
 }
 
 /**
@@ -374,6 +428,22 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(agentDir ?? getAgentDir());
+	const projectRoot = skillProjectRoot(resolvedCwd);
+	const projectSkillsPath = resolve(resolvedCwd, CONFIG_DIR_NAME, "skills");
+	const allowedSet = buildSkillAllowedSet([
+		join(resolvedAgentDir, "skills"),
+		join(homedir(), ".agents", "skills"),
+		...(options.userSkillRoots ?? []),
+		...skillPaths
+			.map((path) => resolvePath(path, resolvedCwd, { trim: true }))
+			.filter((path) => {
+				const provenance = options.provenanceByPath?.get(path);
+				return (
+					provenance?.kind === "user" ||
+					(provenance === undefined && (includeDefaults || !insideSkillRoot(path, projectSkillsPath)))
+				);
+			}),
+	]);
 
 	const skillMap = new Map<string, Skill>();
 	const realPathSet = new Set<string>();
@@ -412,8 +482,29 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
-		addSkills(loadSkillsFromDirInternal(resolve(resolvedCwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		const userRoot = join(resolvedAgentDir, "skills");
+		addSkills(
+			loadSkillsFromDirInternal(
+				userRoot,
+				"user",
+				true,
+				undefined,
+				undefined,
+				{ kind: "user", selectedRoot: userRoot },
+				allowedSet,
+			),
+		);
+		addSkills(
+			loadSkillsFromDirInternal(
+				projectSkillsPath,
+				"project",
+				true,
+				undefined,
+				undefined,
+				{ kind: "project-auto", selectedRoot: projectSkillsPath, projectRoot },
+				allowedSet,
+			),
+		);
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -446,10 +537,17 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		try {
 			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
+			const provenance = options.provenanceByPath?.get(resolvedPath) ?? {
+				kind: source === "project" ? ("project-auto" as const) : ("user" as const),
+				selectedRoot: resolvedPath,
+				projectRoot,
+			};
 			if (stats.isDirectory()) {
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true));
+				addSkills(
+					loadSkillsFromDirInternal(resolvedPath, source, true, undefined, undefined, provenance, allowedSet),
+				);
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
-				const result = loadSkillFromFile(resolvedPath, source);
+				const result = loadSkillFromFile(resolvedPath, source, provenance, allowedSet);
 				if (result.skill) {
 					addSkills({ skills: [result.skill], diagnostics: result.diagnostics });
 				} else {

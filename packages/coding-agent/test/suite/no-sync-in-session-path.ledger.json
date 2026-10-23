@@ -39,11 +39,11 @@
 	],
 	"syncFs": [
 		{
-			"file": "src/core/agent-session.ts",
+			"file": "src/core/skill-access.ts",
 			"api": "readFileSync",
-			"symbol": "_expandSkillCommand",
-			"count": 1,
-			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion)"
+			"symbol": "readSkillFileChecked",
+			"count": 2,
+			"note": "one skill markdown file per explicit $skill token (KB-scale, read once per expansion); moved from agent-session _expandSkillCommand by senpi#3796 so project reads go through the checked descriptor read (user-provenance path and descriptor path, one runs per read)"
 		},
 		{
 			"file": "src/core/agent-session.ts",

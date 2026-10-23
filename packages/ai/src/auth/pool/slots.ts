@@ -347,6 +347,36 @@ function hasNewerMaterial(candidate: CredentialSlot, stored: CredentialSlot): bo
 	return candidate.expires !== undefined && (stored.expires === undefined || candidate.expires > stored.expires);
 }
 
+/** A login tried to store an API-key credential whose `key` is blank or missing (#3867). */
+export class EmptyApiKeyError extends Error {
+	override readonly name = "EmptyApiKeyError";
+
+	constructor() {
+		super("Refusing to save an empty API key");
+	}
+}
+
+/** True when an API-key credential names a `key` that is blank, whitespace or not a string. */
+function hasBlankKey(credential: Credential): boolean {
+	if (credential.type !== "api_key" || !Object.hasOwn(credential, "key")) return false;
+	return typeof credential.key !== "string" || credential.key.trim() === "";
+}
+
+/** Drops a blank or missing `key` from an API-key credential; used only for providers that declare `keyOptional`. */
+export function withoutBlankKey(credential: Credential): Credential {
+	if (credential.type !== "api_key" || !hasBlankKey(credential)) return credential;
+	const { key: _blank, ...rest } = credential;
+	return rest;
+}
+
+/**
+ * Throws `EmptyApiKeyError` when an API-key credential names a `key` that is not a non-empty
+ * string. Env-only logins (AWS profile or credential chain, Vertex ADC) omit the field and pass.
+ */
+export function assertLoginKeyPresent(credential: Credential): void {
+	if (hasBlankKey(credential)) throw new EmptyApiKeyError();
+}
+
 /**
  * Appends an unnamed flat credential to a pool as a generated `login-N` slot.
  * An absent current entry keeps today's whole-write shape; a flat current entry
@@ -369,6 +399,7 @@ export function appendLoginSlot(
 	flat: Credential,
 	onAllocated?: (name: string, origin: "generated" | "provider") => void,
 ): Credential {
+	assertLoginKeyPresent(flat);
 	// A pool holds one kind: a login of the other kind replaces the credential instead of joining it
 	// as a slot nothing can project (senpi#3448). The caller backs up what it replaces.
 	const current = stored?.type === flat.type ? stored : undefined;

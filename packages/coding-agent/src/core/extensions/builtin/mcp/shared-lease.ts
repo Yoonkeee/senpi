@@ -104,17 +104,19 @@ export class SharedMcpLease extends ServerConnection {
 	override refreshCapturedDiagnostics() {
 		this.shared.connection.refreshCapturedDiagnostics();
 	}
+	// A released lease no longer speaks for the shared connection: a late failure seen through it must not degrade
+	// the connection the surviving owners still use (senpi#4013).
 	override markDegraded(error: Error) {
-		this.shared.connection.markDegraded(error);
+		if (!this.#released) this.shared.connection.markDegraded(error);
 	}
 	override markSuspended(error?: Error) {
-		this.shared.connection.markSuspended(error);
+		if (!this.#released) this.shared.connection.markSuspended(error);
 	}
 	override markNeedsAuth(error?: Error) {
-		this.shared.connection.markNeedsAuth(error);
+		if (!this.#released) this.shared.connection.markNeedsAuth(error);
 	}
 	override markNeedsClientRegistration(error?: Error) {
-		this.shared.connection.markNeedsClientRegistration(error);
+		if (!this.#released) this.shared.connection.markNeedsClientRegistration(error);
 	}
 	override onStateChange(listener: Parameters<ServerConnection["onStateChange"]>[0]): () => void {
 		const off = this.shared.connection.onStateChange((event) => listener({ ...event, generation: this.generation }));

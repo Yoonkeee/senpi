@@ -6,7 +6,8 @@ import type { McpElicitationUiProvider } from "./elicitation.ts";
 import { AuthError, ConnectError, TimeoutError } from "./errors.ts";
 import type { McpLogger } from "./log.ts";
 import { delay, reapProcessTree } from "./process-tree.ts";
-import type { McpMaterializedTransport, McpTransportSpec } from "./transport-sdk.ts";
+import type { ProjectMcpMaterialization } from "./project-skill-policy.ts";
+import type { McpMaterializedTransport, McpStdioTransportSpec, McpTransportSpec } from "./transport-sdk.ts";
 import { type McpAsyncErrorSink, safeInterval, safeTimer } from "./wrap.ts";
 
 export type McpTransportConnection = {
@@ -29,6 +30,8 @@ export type McpTransportConnection = {
 };
 
 export type CreateMcpTransportOptions = {
+	readonly projectPolicy?: boolean;
+	readonly resolveProjectPolicy?: () => Promise<ProjectMcpMaterialization>;
 	readonly serverName: string;
 	readonly config: McpServerConfig;
 	readonly logger: McpLogger;
@@ -109,7 +112,7 @@ export async function shutdownMcpTransport(connection: McpTransportConnection): 
 	await Promise.race([closePromise, delay(SHUTDOWN_CLOSE_WAIT_MS)]);
 }
 
-function stdioSpec(options: CreateMcpTransportOptions): McpTransportSpec {
+function stdioSpec(options: CreateMcpTransportOptions): McpStdioTransportSpec {
 	const command = options.config.command;
 	if (command === undefined || command.trim().length === 0) {
 		throw new ConnectError(`MCP server ${options.serverName} stdio command is required`, {
@@ -124,6 +127,20 @@ function stdioSpec(options: CreateMcpTransportOptions): McpTransportSpec {
 		cwd: options.config.cwd,
 		env: { ...definedEnv(options.env), ...(options.config.env ?? {}) },
 		kind: "stdio",
+		projectPolicy: options.projectPolicy,
+		resolveBeforeStart:
+			options.resolveProjectPolicy === undefined
+				? undefined
+				: async () => {
+						const current = await options.resolveProjectPolicy?.();
+						if (current === undefined)
+							throw new ConnectError("Project MCP policy is no longer available", {
+								phase: "create",
+								retriable: true,
+								serverName: options.serverName,
+							});
+						return stdioSpec({ ...options, ...current, resolveProjectPolicy: undefined });
+					},
 	};
 }
 

@@ -39,6 +39,7 @@ import promptUrlWidgetExtension from "./prompt-url-widget.ts";
 import reasoningExtension from "./reasoning/index.ts";
 import recommendedModelsExtension from "./recommended-models/index.ts";
 import redrawsExtension from "./redraws.ts";
+import relocateSessionExtension from "./relocate-session/index.ts";
 import repositoryIdentityExtension from "./repository-identity.ts";
 import piRulesExtension from "./rules/index.ts";
 import scheduleExtension from "./schedule/index.ts";
@@ -118,6 +119,8 @@ export const builtinExtensions: BuiltinExtensionFactory[] = [
 	{ id: "cache-keepalive", factory: cacheKeepAliveExtension },
 	// After cache-keepalive: its warm pings move the cache expiry the hint waits for.
 	{ id: "handoff-hint", factory: handoffHintExtension },
+	// Asks the session's host to continue it on another computer; without a host it only answers "stay here".
+	{ id: "relocate-session", factory: relocateSessionExtension },
 	{ id: "ttsr", factory: ttsrExtension },
 	{ id: "btw", factory: btwExtension },
 	// HTML page rendering for standalone senpi (TUI/local); the desktop thread reaches the

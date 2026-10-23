@@ -18,10 +18,13 @@ import {
 	type McpElicitationUiProvider,
 } from "./elicitation.ts";
 import type { McpLogger } from "./log.ts";
+import { ProjectStdioTransport } from "./project-stdio-transport.ts";
 import { loadMcpSdkClient, loadMcpSdkStdioTransport, loadMcpSdkStreamableHttpTransport } from "./sdk.lazy.ts";
 import { type McpAsyncErrorSink, safeOn } from "./wrap.ts";
 
 export type McpStdioTransportSpec = {
+	readonly projectPolicy?: boolean;
+	readonly resolveBeforeStart?: () => Promise<McpStdioTransportSpec>;
 	readonly kind: "stdio";
 	readonly command: string;
 	readonly args: string[] | undefined;
@@ -71,13 +74,22 @@ async function materializeStdio(
 	client: Client,
 ): Promise<McpMaterializedTransport> {
 	const { getDefaultEnvironment, StdioClientTransport } = await loadMcpSdkStdioTransport();
-	const transport = new StdioClientTransport({
-		args: spec.args,
-		command: spec.command,
-		cwd: spec.cwd,
-		env: { ...getDefaultEnvironment(), ...spec.env, ...oauthAccessTokenEnv(spec.authProvider) },
-		stderr: "pipe",
-	});
+	const create = (current: McpStdioTransportSpec) =>
+		new StdioClientTransport({
+			args: current.args,
+			command: current.command,
+			cwd: current.cwd,
+			env: {
+				...(current.projectPolicy ? {} : getDefaultEnvironment()),
+				...current.env,
+				...oauthAccessTokenEnv(current.authProvider),
+			},
+			stderr: "pipe",
+		});
+	const transport =
+		spec.projectPolicy && spec.resolveBeforeStart !== undefined
+			? new ProjectStdioTransport(spec.resolveBeforeStart, create)
+			: create(spec);
 	trackStdioStart(transport, options.onStart);
 	pipeStderr(transport, options.logger, options.sink);
 	dropNullNextCursor(transport);
@@ -143,7 +155,7 @@ function dropNullNextCursor(transport: Transport): void {
 	};
 }
 
-function trackStdioStart(transport: StdioClientTransport, onStart: () => void): void {
+function trackStdioStart(transport: Pick<StdioClientTransport, "start">, onStart: () => void): void {
 	const start = transport.start.bind(transport);
 	transport.start = async () => {
 		await start();
@@ -151,7 +163,7 @@ function trackStdioStart(transport: StdioClientTransport, onStart: () => void): 
 	};
 }
 
-function pipeStderr(transport: StdioClientTransport, logger: McpLogger, sink: McpAsyncErrorSink): void {
+function pipeStderr(transport: Pick<StdioClientTransport, "stderr">, logger: McpLogger, sink: McpAsyncErrorSink): void {
 	let pending = "";
 	const stderr = transport.stderr;
 	if (stderr === undefined || stderr === null) return;

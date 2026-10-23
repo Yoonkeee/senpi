@@ -1,5 +1,23 @@
 # core/tools changes
 
+## 2026-10-19 - Read-only built-in tools declare `workspaceEffect: "read"` (senpi#3717)
+
+### What changed
+
+- `packages/coding-agent/src/core/tools/read.ts`, `find.ts`, `ls.ts` (and fork-only `glob.ts`, `grep/index.ts`): each definition sets `workspaceEffect: "read"`, so it runs while a tool barrier is armed.
+
+### Why
+
+A client that captures a pre-turn workspace checkpoint had to finish the capture before sending the prompt, because a write tool could run before it was ready; that capture sat on the send-to-first-request path. A session tool barrier lets the prompt go out at once while workspace-changing tools wait for the client's release.
+
+### Why an extension could not handle it
+
+The built-in definitions are upstream-owned; the classification belongs on the definition, not in a name list an extension would have to keep in sync.
+
+### Expected merge conflict zones
+
+- Each factory's returned definition head (the `name` property line).
+
 ## 2026-10-19 - A stuck lock holder fails its waiters fast (senpi#3622)
 
 ### What changed

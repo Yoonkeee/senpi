@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { SessionKind } from "../../core/extensions/types.ts";
+import type { ExtensionUIContext, SessionKind } from "../../core/extensions/types.ts";
+import type { SecurityNoticeSnapshot, SecurityNoticeState } from "../../core/security-notices.ts";
 import { MEDIA_PLACEHOLDERS_CAPABILITY } from "./custom-capability.ts";
 import { serializeJsonLine } from "./jsonl.ts";
 import { type MediaPersister, omitInlineMedia } from "./media-placeholders.ts";
@@ -10,6 +11,7 @@ import type {
 	RpcSessionClosedReason,
 	RpcSessionParkedEvent,
 } from "./rpc-types.ts";
+import { RpcSecurityPresentations } from "./security-presentations.ts";
 import { SessionEventFanout, type SessionEventWriterConnection } from "./session-event-fanout.ts";
 import { SessionOpenTurns } from "./session-open-turns.ts";
 import { causeOfRecord, type SessionStatusActor, terminalOfLifecycle } from "./session-status.ts";
@@ -104,6 +106,12 @@ export class SessionEventWriter {
 	private readonly queues = new Map<string, RecordQueue>();
 	private readonly fanout = new SessionEventFanout();
 	private readonly connectionContext = new AsyncLocalStorage<string>();
+	private readonly securityPresentations = new RpcSecurityPresentations(
+		this.fanout,
+		(id, task) => this.withConnection(id, task),
+		() => this.requestFlush(),
+	);
+	readonly workerSecurityBridge: boolean = false;
 	private readonly controlQueue: RecordQueue = { latestByKey: new Map(), ready: false };
 	private readonly readyQueues: RecordQueue[] = [];
 	private readonly sealedSessions = new Set<string>();
@@ -158,6 +166,7 @@ export class SessionEventWriter {
 		waitOrSchedule?: BackpressureWaiter | FlushScheduler,
 		scheduleFlush?: FlushScheduler,
 	) {
+		this.fanout.onConnectionClosed = (id) => this.securityPresentations.dropConnection(id);
 		this.writeRaw = writeRaw;
 		if (waitOrSchedule && scheduleFlush === undefined && waitOrSchedule.length > 0) {
 			this.scheduleFlush = waitOrSchedule as FlushScheduler;
@@ -194,6 +203,7 @@ export class SessionEventWriter {
 	}
 
 	unregisterConnection(id: string): void {
+		this.securityPresentations.dropConnection(id);
 		this.fanout.unregisterConnection(id);
 		this.status.dropConnection(id);
 		this.surfaceDedupe.dropConnection(id);
@@ -201,10 +211,12 @@ export class SessionEventWriter {
 
 	attachConnectionToSession(id: string, sessionId: string): void {
 		this.fanout.attachConnectionToSession(id, sessionId);
+		if (this.hasConnection(id)) this.securityPresentations.attach(id, sessionId);
 	}
 
 	detachConnectionFromSession(id: string, sessionId: string): void {
 		this.fanout.detachConnectionFromSession(id, sessionId);
+		this.securityPresentations.detach(id, sessionId);
 	}
 
 	hasConnection(id: string): boolean {
@@ -213,10 +225,39 @@ export class SessionEventWriter {
 
 	setConnectionCapabilities(id: string, capabilities: readonly string[]): void {
 		this.fanout.setConnectionCapabilities(id, capabilities);
+		this.securityPresentations.capabilitiesChanged(id);
 	}
 
 	clearConnectionCapabilities(id: string): void {
 		this.fanout.clearConnectionCapabilities(id);
+		this.securityPresentations.capabilitiesChanged(id);
+	}
+	bindSecurityPresentations(
+		sessionId: string,
+		durableId: string,
+		notices: SecurityNoticeSnapshot,
+		ui: ExtensionUIContext,
+	): (() => void) | undefined {
+		if (this.fanout.isEmpty()) return undefined;
+		return this.securityPresentations.bind(sessionId, durableId, notices, ui.select);
+	}
+	acceptWorkerSecuritySnapshot(sessionId: string, snapshot: SecurityNoticeState): void {
+		this.securityPresentations.acceptSnapshot(sessionId, snapshot);
+	}
+	routeWorkerGrant(
+		sessionId: string,
+		requestId: string,
+		preferred: string | undefined,
+		capabilities: readonly string[],
+		cancel: () => void,
+	): { readonly accepted: boolean; readonly connection?: string } {
+		return this.securityPresentations.routeWorkerGrant(sessionId, requestId, preferred, capabilities, cancel);
+	}
+	acceptWorkerGrantResponse(sessionId: string, id: string, connection: string | undefined): boolean | undefined {
+		return this.securityPresentations.acceptWorkerResponse(sessionId, id, connection);
+	}
+	settleGrantDialog(sessionId: string, id: string): void {
+		this.securityPresentations.settleGrant(sessionId, id);
 	}
 
 	hasRegisteredConnectionCapabilities(id: string): boolean {
@@ -267,6 +308,9 @@ export class SessionEventWriter {
 		const isTargeted =
 			record.type === "response" ||
 			record.type === "bash_execution_update" ||
+			// Relocation records belong to the one connection that offers it (session-relocation-channel.ts).
+			record.type === "host_request" ||
+			record.type === "relocation_due" ||
 			(record.type === "extension_ui_request" &&
 				["select", "confirm", "input", "editor"].includes(String(record.method)));
 		const tagged = { ...value, sessionId } as RpcRecord;
@@ -523,6 +567,7 @@ export class SessionEventWriter {
 	closeSession(sessionId: string, response: object, reason?: RpcSessionClosedReason, sessionPath?: string): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
+		this.securityPresentations.dropSession(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		const targetId = this.connectionContext.getStore();
@@ -595,6 +640,7 @@ export class SessionEventWriter {
 	private sealWithLifecycle(sessionId: string, lifecycle: RpcSessionParkedEvent | RpcSessionClosedEvent): void {
 		if (!this.settleBeforeSeal(sessionId)) return;
 		this.sealedSessions.add(sessionId);
+		this.securityPresentations.dropSession(sessionId);
 		this.fanout.forgetSession(sessionId);
 		this.mediaPersisters.delete(sessionId);
 		if (this.fanout.isEmpty()) this.appendSessionRecord(sessionId, lifecycle);

@@ -1,3 +1,23 @@
+## 2026-10-21 - Launch-gated Fable 5.5 preset (senpi#3893)
+
+### What changed
+
+- `claude-fable-5-5.ts`: delegates to the current tuned Fable 5.1 builder with no prompt-byte changes, preserving the dieted core, between-handoff rule, eval stance and all surface-specific behavior.
+- `contract.ts`, `settings.ts`, `presets.ts`: register the new internal preset and route provisional Fable/Mythos 5.5 ids before the generic Fable 5 matcher. Provider ids and optional snapshot are read from the shared `FABLE55_LAUNCH` block.
+- Tests cover routing, forced settings, all three prompt surfaces with and without eval, and retain existing 5/5.1 routing. The six new baseline hashes equal the corresponding 5.1 hashes; existing hashes are untouched.
+
+### Why
+
+- The unreleased model would otherwise receive the older generic Fable 5 core. This carries the measured 5.1 baseline without claiming a new prompting guide exists or growing the prompt.
+
+### Why an extension could not handle it
+
+- This is the builtin preset's own dispatch and settings contract.
+
+### Expected merge conflict zones
+
+- Claude entries in `contract.ts`, `settings.ts`, `presets.ts`; the new preset is fork-only.
+
 ## 2026-10-15 - Argon preset (senpi#3385)
 
 ### What changed

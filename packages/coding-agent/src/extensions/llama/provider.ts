@@ -156,6 +156,7 @@ export function createLlamaProvider(): LlamaProviderController {
 		auth: {
 			apiKey: {
 				name: "llama.cpp server",
+				keyOptional: true,
 				login: async (interaction): Promise<ApiKeyCredential> => {
 					const enteredUrl = await interaction.prompt({
 						type: "text",

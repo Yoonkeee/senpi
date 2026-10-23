@@ -1,3 +1,4 @@
+import { FABLE55_LAUNCH } from "@earendil-works/pi-ai/utils/fable55-launch";
 import type { FallbackChains } from "./chains.ts";
 
 export interface ProviderRetrySettings {
@@ -46,6 +47,7 @@ export interface ResolvedRetryFallbackSettings {
  * `claude-opus-4-8` or `claude-opus-4-6` (senpi#3727).
  */
 export const DEFAULT_FALLBACK_CHAINS: FallbackChains = {
+	...(FABLE55_LAUNCH.released ? { [FABLE55_LAUNCH.modelId]: ["claude-opus-5-5:max", "claude-opus-5:max"] } : {}),
 	// Every rung is `:max`: Opus 5.5 is recommended at max.
 	"claude-fable-5-1": ["claude-opus-5-5:max", "claude-opus-5:max"],
 	"claude-fable-5": ["claude-opus-5-5:max", "claude-opus-5:max"],

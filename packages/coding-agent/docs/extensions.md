@@ -474,6 +474,22 @@ and call `ctx.noteHeldWake("goal")` (or its own source key) instead of charging.
 Source-only notices are consumed on release and reported through
 `held_wakes_released`; they never require a model payload to clear the hold.
 
+#### session_hold_changed
+
+`pi.on("session_hold_changed", (event, ctx) => ...)` fires when this session becomes paused or resumed
+(senpi#3811). `event.change` is `"paused"` or `"resumed"`, `event.pauseSeq` is the session's pause sequence, and
+`event.holds` lists the live records as `{ kind, key, data? }`: `session_hold` for a user Stop, `run_fence` for a
+run the Stop paused, `inherited_hold` while a parent's run keeps this task child paused, and `unattended`. A
+workflow runner uses it to pause the run a stopped session started.
+
+`ctx.getPauseState()` returns the same `{ pauseSeq, holds }` snapshot. `ctx.fenceRun({ kind, id })` keeps wakes
+whose `details.runRef` names that run as notices until the user resumes; untagged wakes are not affected by a
+fence. Human input and `resume_session` release fences together with the user's Stop.
+`ctx.releaseRunFence({ kind, id })` drops that run's fence when the run is cancelled: call it after the run is
+journaled terminal. Later wakes tagged with the run are admitted again, fences for other runs stay, and releasing a
+run that has no fence does nothing. A fence alone does not pause the session, so fencing or releasing only a fence
+emits no `session_paused`/`session_resumed` and no `session_hold_changed`; each pause gets exactly one resume.
+
 #### held_wakes_released
 
 `pi.on("held_wakes_released", (event, ctx) => ...)` receives
@@ -499,7 +515,7 @@ and release entries carry `keys`. Restart restores both identity and metadata.
 
 `getHold(key)` returns the current keyed record, or `undefined`.
 `release(keys, cause)` releases only the named keys and emits `session_resumed`
-only when the final active record goes. `releaseAll(cause)` delegates to that
+only when the session stops being held, once per `session_paused`. `releaseAll(cause)` delegates to that
 operation. The cause union remains `"input" | "resume_session"`.
 `engine-turn-hold-notices.ts` owns notice persistence, coalescing, counts, and
 consumption; the ledger delegates to that one custody path.
@@ -723,6 +739,37 @@ export default function (pi: ExtensionAPI) {
   });
 }
 ```
+
+#### session_move_export / session_move_import
+
+Moving a session to another device (`release_session` reason `move`, then RPC `move_session`) carries the session file, its extension sidecars and its resident blobs. State an extension keeps elsewhere (task records, logs, finished child sessions) follows only if the extension hands it over:
+
+```typescript
+pi.on("session_move_export", async (event, ctx) => {
+  // event.moveId - the move
+  // event.dir - an empty folder for this release attempt; write under a subfolder named after your extension
+  // event.signal - aborted when the host stops waiting on this handler; stop writing when it fires
+  // Throwing refuses the move: release_session answers release_failed and nothing is sealed.
+  // Each handler runs under the session_shutdown handler budget (sessionShutdownHandlerWarnMs warns, 2 s by
+  // default; sessionShutdownHandlerTimeoutMs caps, 10 s by default); one still running at the cap refuses the
+  // move the same way. A refused attempt's folder is removed, and only the attempt that seals the session is
+  // bundled, so anything a handler writes after its signal aborted never reaches the move.
+});
+
+pi.on("session_move_import", async (event, ctx) => {
+  // Fired right after session_start of an open that finds state a move brought in.
+  // event.dir - this delivery's own copy of what the sender's extensions wrote
+  // event.redelivered - true when this state was delivered before and not marked restored
+  // event.signal - aborted when the host stops waiting on this handler
+  // The state is marked restored and removed once every handler returned without throwing within the
+  // session_shutdown handler budget. Otherwise the failure is reported as an extension error and the next open
+  // delivers it again to every handler (redelivered: true), as does a crash before the hand-over is recorded.
+});
+```
+
+Import handlers must be idempotent: a handler that already applied the state, or part of it, may see the same state again, and restoring it twice must leave the same result as restoring it once. Use `event.redelivered` to skip work cheaply, for example by checking what you already restored for `event.moveId`.
+
+Setting `sessionShutdownHandlerTimeoutMs` to `0` removes the cap for move handlers too: a hung `session_move_export` handler then holds the `move` release (and, on its `interrupt` path, the session's closed admission) until it returns, and a hung `session_move_import` handler holds the session open.
 
 ### Agent Events
 
@@ -1405,7 +1452,7 @@ if (usage && usage.tokens > 100_000) {
 
 ### ctx.getCompactionModel()
 
-Optional on hosts that expose session-owned summarization routing. Returns the current session model while its account is usable, preserving builtin compaction behavior even when core compaction has a model override. For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
+Optional on hosts that expose session-owned summarization routing. While the session account is usable, returns the configured `compaction.model` when it resolves to a model whose provider has credentials and whose account can serve, and the current session model otherwise (an override that cannot serve is logged as `compaction_model_fallback`, once per cause until the cause changes or the override is used; before credential availability is known, the override is kept and builtin summarization falls back to the session model if it has no credentials at request time). For a spent account, it tries the held switch target, the configured summary override, then an authenticated alternate with enough context capacity for the active transcript and reserved output. It does not change the active session selection and throws an account-limit error when no usable summary model is available.
 
 ### ctx.compact()
 
@@ -1780,6 +1827,9 @@ runtime's steering or follow-up queue like the user's queued input. The protocol
 | `admitExternalMessage({ delivery_id, text, deliverAs, expected_turn_id?, sender?, display_text?, whenIdle? })` | `{ kind, turn_epoch }` | Decides and acts in one synchronous call. `whenIdle` (`start`, the default, or `queue`) is what an idle session does with it: start a turn, or hold it (`queued`) in the `deliverAs` queue for the next turn. `kind` is `started`, `queued`, `steered`, `turn_conflict` (stale epoch, or a steer without one), `held_draft` (nothing enqueued; retry on the next wake) or `already_admitted` (also for a delivery whose entry the file refused, until the run that refused it has settled and the file's last write succeeded). The delivery becomes a `custom` entry `session_control_delivery` whose `details.delivery_id` proves it was applied. Throws once a host started handing the session over (`release_session`). `sender` (`{ kind: "agent", session_id, name? }`, `{ kind: "command_line", user? }` or `{ kind: "external", platform, author? }`) and `display_text` (the message as written) go to the entry's `details`: the terminal labels the message by its sender over `display_text`, while the model reads `text`. |
 | `listAdmittedDeliveries()` | `{ pending, emitted, failed? }` | The process-lifetime ledger: `pending` is held by the runtime, `emitted` has its transcript entry written, `failed` (present only when non-empty, `[{ delivery_id, error }]`) had its entry refused by the session file: no longer held, still with its sender, admissible again once the run that refused it has settled and the file's last write succeeded. |
 | `persistHeaderNow()` | `Promise<void>` | Writes the session header now, so the session id is durable before anything exposes it. |
+| `relocationOffered()` | `boolean` | Whether the session's host offers continuing it on another computer right now. The builtin relocation tools are active only while it is `true`. |
+| `relocationTargets(signal?)` | `Promise<RelocationTargetsResult>` | The user's other computers the session's host offers to continue on (`listed`), or `unavailable` when no host offers relocation. |
+| `requestRelocation({ target, reason }, signal?)` | `Promise<RelocationRequestResult>` | Asks the host to continue this session on `target` when the current turn ends (`scheduled`); never interrupts the turn. `unavailable` or `refused` leaves the session working here. See `docs/rpc.md` "Continuing a session on another computer". |
 
 ```typescript
 export default function ({ pi }) {
@@ -2059,6 +2109,32 @@ pi.sendMessage({
   - `"followUp"` - Waits for agent to finish. Delivered only when agent has no more tool calls.
   - `"nextTurn"` - Queued for next user prompt. Does not interrupt or trigger anything.
 - `triggerTurn: true` - If agent is idle, trigger an LLM response immediately. Only applies to `"steer"` and `"followUp"` modes (ignored for `"nextTurn"`). Requested from a `session_start` handler, the turn starts once every extension's `session_start` handler has returned.
+- `items` - Make the message an itemized batch: one `{ itemId, producer, runRef?, content?, details? }` per wake it
+  carries. The call then returns a promise of one receipt per item, `{ itemId, entryId, disposition, noticeId? }`.
+  Admission is atomic: if a pause applies to the batch or to any item (a Stop, a parent's run pause, an unattended
+  hold, or a fence on that item's `runRef`), every item is stored as its own notice (`notice_persisted`, with
+  the item's own `content` and `details`, or the batch content when an item has none), all written in one entry, so
+  the batch is kept whole or not at all: if that write fails the promise rejects and no item is kept; otherwise the batch is
+  delivered as one message and every receipt names that message's entry (`message_persisted`). A held item's notice
+  is delivered on its own when the session resumes, and a later wake from the same producer never replaces it.
+  A host without item custody (an embedder's runtime) delivers the batch as a plain message and the promise
+  answers `undefined`, as an engine without `items` would. The itemized return type also admits `void`, so an
+  `ExtensionAPI` implementation or test double written with a single `sendMessage(...): void` signature stays
+  assignable; treat `void` like `undefined` (no receipts). Without `items`, `sendMessage` returns nothing, as before.
+
+```typescript
+const receipts = await pi.sendMessage(
+  { customType: "my-coordinator:wake", content: "Task A finished\n\nTask B finished", display: false },
+  {
+    triggerTurn: true,
+    deliverAs: "followUp",
+    items: [
+      { itemId: "a", producer: "task", runRef: { kind: "task", id: "t1" }, content: "Task A finished" },
+      { itemId: "b", producer: "task", content: "Task B finished" },
+    ],
+  },
+);
+```
 
 ### pi.sendUserMessage(content, options?)
 
@@ -2389,6 +2465,17 @@ const builtinTools = all.filter((t) => t.sourceInfo.source === "builtin");
 const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.sourceInfo.source !== "sdk");
 pi.setActiveTools([...new Set([...active, "my_custom_tool"])]); // Keep current tools and enable my_custom_tool
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
+```
+
+### pi.armToolBarrier(spec) / pi.releaseToolBarrier(id)
+
+Hold the workspace-changing tools of a turn until you are ready, for example while you capture a checkpoint of the workspace. `pi.armToolBarrier({ id, deadlineMs })` arms the session's tool barrier; while it is armed, every tool not declared `workspaceEffect: "read"` waits before it runs. Armed while the session is idle (for example from `before_agent_start`), it belongs to the next turn. It opens on `pi.releaseToolBarrier(id)` (which returns `false`, a no-op, when no barrier with that id is armed), when its turn ends, or after `deadlineMs` (1..600000), which emits the `tool_barrier_expired` session event. Stop ends the wait. `id` is 1-256 characters; arming again replaces the id and ceiling while calls already waiting keep waiting.
+
+```typescript
+pi.on("before_agent_start", () => {
+  pi.armToolBarrier({ id: "checkpoint", deadlineMs: 30_000 });
+  void captureCheckpoint().finally(() => pi.releaseToolBarrier("checkpoint"));
+});
 ```
 
 `pi.getAllTools()` returns `name`, `description`, `parameters`, `promptGuidelines`, `kernelPrelude`, `permissionParser`, and `sourceInfo`.
@@ -3173,6 +3260,7 @@ Add these fields to `pi.registerTool(...)`:
 - **`searchKeywords`**: Synonyms or domain terms, indexed with the same weight as the tool name. Never sent to the model.
 - **`searchGroup`**: Organizational filter group. Defaults to your extension's label.
 - **`namespace`** and **`annotations`**: Optional grouping and behavior hints, for example from an MCP server.
+- **`workspaceEffect`**: `"read" | "write"`. A `"read"` tool runs while a tool barrier is armed (see `pi.armToolBarrier`); any other tool, including one that leaves this unset, waits for the barrier's release. Declare `"read"` only for tools that never change files, processes or other workspace state.
 - **`outputSchema`**: Optional schema for `structuredContent`; a result can also set `isError`.
 - **`allowLazyActivation`**: Default `true`. If `false`, the tool is hidden from `tool_search` completely and cannot be lazily activated during code mode execution. Explicit activation via `pi.setActiveTools()` is still allowed.
 

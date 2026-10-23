@@ -266,16 +266,50 @@ the same line senpi draws for `mcp.json` files:
   `cwd` expand exactly like your own `mcp.json`, including `${VAR:-default}`
   and the refusal of command substitution (a server asking for `$(...)` or a
   leading `!` is skipped with a warning).
-- **Skills of an untrusted project**: nothing expands. The placeholder stays
+- **Skills of an untrusted project, without a grant**: nothing expands. The placeholder stays
   literal and senpi warns once, naming the skill and the variable; trust the
   project or declare the server in your own `mcp.json` to expand it. A cloned
   repository must not be able to hand `AWS_SECRET_ACCESS_KEY` to a command it
   chose.
-- **Remote servers from any skill**: `url` and `headers` never expand, and
+- **Remote servers from any skill, without a project declaration grant**: `url` and `headers` never expand, and
   `bearerTokenEnv` is ignored, so no `Authorization` header is sent. Expanding
   them would send your secrets to a server the skill picked. senpi warns once
   per server; declare the server in your own `mcp.json`, where variables and
   `bearerTokenEnv` keep working.
+
+Project-provenance skills also have a declaration-scoped environment policy.
+Their child environment is assembled in this order, with later values winning:
+the finite safe ambient base (paths, home, temp, listed locale and platform
+variables, and CA paths), ambient names granted to this declaration,
+explicit `McpSessionOptions.env`, then declared `env` values. Proxies and
+unlisted locale names require grants. Ambient npm/yarn/pnpm metadata stays
+excluded; explicit and declared values are not removed.
+User-provenance skills keep the existing SDK defaults and merge behavior.
+
+When a project declaration references a withheld name, the TUI or an RPC client
+advertising `grant_select` offers **Grant and save permanently** and **Start
+without them**. A grant re-resolves only those `${VAR}` references and restores
+that declaration's `bearerTokenEnv`, including remote declarations. Other
+references retain the trust rules above. Cancel, disconnect, the second choice
+and the 120-second deadline save nothing. Headless and question-only clients
+start with the filtered environment and a names-only warning.
+
+Grants are stored in `<configured-agent-dir>/mcp-env-grants.json`. The exported
+`@code-yeongyu/senpi/mcp-env-grants` module accepts the resolved config directory;
+without an explicit directory its resolver defaults to
+`$XDG_CONFIG_HOME/omo/mcp-env-grants.json` or `~/.config/omo/mcp-env-grants.json`.
+The shared schema is `{version:1,generation,grants}`, where each SHA-256
+declaration key maps to `{label:{project,skill,server},names}`. It stores names,
+never values. Identity covers canonical source path, source kind, project root,
+server name, the complete raw declaration and canonical session cwd.
+Changing a declaration requires a new grant; rotating an ambient value does not.
+
+Writes lock, merge, fsync and atomically rename the file. Live native hosts watch
+the directory and reconcile at least every five seconds. Changed grant sets
+invalidate existing transports, including shared children. Invalid reads,
+counter rollback, uncertain replacement and skipped generations conservatively
+invalidate live project connections; subsequent materialization reads current
+grants again. The store keeps no change history.
 
 ## Resources and prompts
 
@@ -321,7 +355,7 @@ the same line senpi draws for `mcp.json` files:
 - Config values never pass through a shell; `${VAR}` expansion only reads the
   trusted parent environment, and only for trusted sources: your own and a
   trusted project's config, and stdio servers of skills you own. Skill remote
-  servers never expand variables or send `bearerTokenEnv` (see
+  servers only expand variables or send `bearerTokenEnv` after a project declaration grant (see
   [Environment variables in skill servers](#environment-variables-in-skill-servers)).
 - Project-level and imported configs require project trust before servers
   spawn; untrusted entries are listed but inert.

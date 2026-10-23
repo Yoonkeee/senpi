@@ -279,7 +279,8 @@ describe("#3131 spent account", () => {
 		expect(harness.faux.getCallLog().map((call) => call.modelId)).toEqual(["primary", "sibling"]);
 	});
 
-	it("keeps builtin compaction on a healthy session model despite a core compaction override", async () => {
+	// #830 reversed this contract: a configured summary model serves healthy sessions too.
+	it("uses the core compaction override for builtin compaction on a healthy session", async () => {
 		const harness = await createHarness({
 			models: [{ id: "primary" }, { id: "cheap" }],
 			settings: { compaction: { keepRecentTokens: 1, model: "other/cheap" } },
@@ -300,7 +301,7 @@ describe("#3131 spent account", () => {
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual(["faux/primary"]);
+		expect(requests).toEqual(["other/cheap"]);
 	});
 
 	it("skips an authenticated summary alternate whose context window cannot fit the input", async () => {

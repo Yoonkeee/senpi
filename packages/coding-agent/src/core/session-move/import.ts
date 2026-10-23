@@ -8,11 +8,22 @@ import {
 } from "../repository-identity.ts";
 import { getDefaultSessionDir, loadEntriesFromFile, SessionManager } from "../session-manager.ts";
 import { rebindSessionFile } from "../session-rebind.ts";
-import { encodedSessionId } from "../session-sidecar-store.ts";
-import { MoveBundleInvalidError, type MoveManifest, readManifest, verifyBundle } from "./bundle.ts";
-import { MoveFencedError, type MoveLedger, type MoveStatus } from "./move-ledger.ts";
-import { headerSessionId, type MoveId, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
+import { encodedSessionId, serializeByKey } from "../session-sidecar-store.ts";
+import {
+	EXTENSION_STATE_PREFIX,
+	MoveBundleInvalidError,
+	type MoveManifest,
+	readManifest,
+	sha256File,
+	verifyBundle,
+} from "./bundle.ts";
+import { EXTENSION_STATE_PAYLOAD, movedStateDir } from "./extension-state.ts";
+import { type MoveAnswer, MoveFencedError, type MoveLedger } from "./move-ledger.ts";
+import { moveStep } from "./move-steps.ts";
+import { headerSessionId, type MoveId, SESSION_MOVED, SESSION_MOVED_IN, sessionOwnership } from "./ownership.ts";
 import { requeueInput } from "./requeue.ts";
+import { REVOKED } from "./revoke.ts";
+import { moveLockKey } from "./session-lock.ts";
 
 export interface ImportMovedSessionOptions {
 	readonly bundleDir: string;
@@ -54,14 +65,49 @@ const movedInFor = (file: string, moveId: MoveId): boolean =>
 			(entry.data as { move_id?: unknown } | undefined)?.move_id === moveId,
 	);
 
-/** The sender's question, answered with the session file as the authority: a committed import is accepted. */
-export function answerMoveStatus(
+/** What the session file records for the move: nothing, its import, or its import and then a revoke. */
+function importOutcome(file: string, moveId: MoveId): "absent" | "moved_in" | "revoked" {
+	let outcome: "absent" | "moved_in" | "revoked" = "absent";
+	for (const entry of loadEntriesFromFile(file)) {
+		if (entry.type !== "custom") continue;
+		const data = entry.data as { move_id?: unknown; reason?: unknown } | undefined;
+		if (data?.move_id !== moveId) continue;
+		if (entry.customType === SESSION_MOVED_IN) outcome = "moved_in";
+		else if (outcome === "moved_in" && entry.customType === SESSION_MOVED && data.reason === REVOKED)
+			outcome = "revoked";
+	}
+	return outcome;
+}
+
+export class StatusPathMismatchError extends Error {
+	readonly code = "move_mismatch";
+
+	constructor(moveId: MoveId, sessionFile: string) {
+		super(
+			`${sessionFile} is not the copy this device imported for move ${moveId}; nothing was answered. Pass the session_path import returned for this move, or leave sessionPath out to answer from this device's record.`,
+		);
+		this.name = "StatusPathMismatchError";
+	}
+}
+
+/**
+ * The sender's question. The ledger answers, its `accepted` final and marked `revoked` once the import is revoked; a
+ * given session file is read in the move's queue and is the authority too (a committed import is accepted, a revoked
+ * one revoked), so a file that is not this move's import is refused. A path with no file answers from the ledger.
+ */
+export async function answerMoveStatus(
 	ledger: MoveLedger,
 	moveId: MoveId,
 	sessionFile: string | undefined,
-): Promise<MoveStatus> {
-	const movedIn = sessionFile !== undefined && existsSync(sessionFile) && movedInFor(sessionFile, moveId);
-	return ledger.answerStatus(moveId, { movedIn });
+): Promise<MoveAnswer> {
+	const landed = (target: string) => (existsSync(target) ? importOutcome(target, moveId) : "absent");
+	if (sessionFile === undefined || !existsSync(sessionFile))
+		return ledger.answerStatus(moveId, { movedIn: false, landed });
+	return serializeByKey(moveLockKey(sessionFile), async () => {
+		const outcome = importOutcome(sessionFile, moveId);
+		if (outcome === "absent") throw new StatusPathMismatchError(moveId, sessionFile);
+		return ledger.answerStatus(moveId, { movedIn: true, revoked: outcome === "revoked", landed });
+	});
 }
 
 /**
@@ -74,38 +120,55 @@ export function answerMoveStatus(
 export async function importMovedSession(
 	options: ImportMovedSessionOptions,
 ): Promise<{ readonly sessionFile: string }> {
-	const manifest = readManifest(options.bundleDir);
+	const manifest = await readManifest(options.bundleDir);
 	const targetCwd = resolvePath(options.targetCwd);
 	const sessionDir = options.sessionDir ? normalizePath(options.sessionDir) : getDefaultSessionDir(targetCwd);
 	const target = join(sessionDir, manifest.sessionFileName);
-	if (existsSync(target) && movedInFor(target, manifest.moveId)) {
-		// The rename already committed; a crash may have lost the ledger write, and the file is the authority.
-		await options.ledger.commit(manifest.moveId, () => undefined);
+	// Once this move's file landed, the move records no failure: only its `accepted` write can have been lost, so it stays
+	// receiving and a re-run accepts it. `fail` asks this under the move's lock, where an overlapping commit cannot race it.
+	const landed = () => existsSync(target) && movedInFor(target, manifest.moveId);
+	if (landed()) {
+		// The rename already committed; a crash or a failed write may have lost `accepted`, and the file is the authority.
+		await options.ledger.confirmLanded(manifest.moveId, target, importOutcome(target, manifest.moveId) === "revoked");
 		return { sessionFile: target };
 	}
 	try {
-		verifyBundle(options.bundleDir, manifest);
+		await verifyBundle(options.bundleDir, manifest);
 	} catch (error) {
-		if (error instanceof MoveBundleInvalidError) await options.ledger.fail(manifest.moveId, "bundle_invalid");
+		if (error instanceof MoveBundleInvalidError)
+			await options.ledger.fail(manifest.moveId, "bundle_invalid", { unlessLanded: landed });
 		throw error;
 	}
 	const read = options.readIdentity ?? readRepositoryIdentity;
 	if (compareRepositoryIdentities(manifest.repository, await read(targetCwd)) !== "same") {
-		await options.ledger.decline(manifest.moveId, "repository");
+		if (!landed()) await options.ledger.decline(manifest.moveId, "repository");
 		throw new MoveRefusedError(targetCwd, manifest.sourceCwd);
 	}
-	await options.ledger.beginReceive(manifest.moveId);
+	await options.ledger.beginReceive(manifest.moveId, target);
+	moveStep("import:received");
 	const staging = join(sessionDir, ".move-staging", encodeURIComponent(manifest.moveId));
 	try {
 		const staged = await stage(options.bundleDir, manifest, staging, options.from ?? "");
-		const sessionFile = await options.ledger.commit(manifest.moveId, () => {
-			replacePredecessor(target, manifest.sessionId, sessionDir);
-			return rebindSessionFile(staged, targetCwd, sessionDir);
-		});
+		const sessionFile = await options.ledger.commit(
+			manifest.moveId,
+			target,
+			() => rebindSessionFile(staged, targetCwd, sessionDir),
+			() => {
+				replacePredecessor(target, manifest.sessionId, sessionDir);
+				// Before the rename: a crash here re-copies on retry, and after it the state is already in place.
+				placeExtensionState(staging, manifest, movedStateDir(target, manifest.moveId));
+			},
+		);
+		moveStep("import:accepted");
 		rmSync(staging, { recursive: true, force: true });
 		return { sessionFile };
 	} catch (error) {
-		if (!(error instanceof MoveFencedError)) await options.ledger.fail(manifest.moveId, "import_failed");
+		if (!(error instanceof MoveFencedError))
+			await options.ledger.fail(
+				manifest.moveId,
+				error instanceof MoveBundleInvalidError ? "bundle_invalid" : "import_failed",
+				{ unlessLanded: landed },
+			);
 		throw error;
 	}
 }
@@ -132,6 +195,33 @@ function replacePredecessor(target: string, sessionId: string, sessionDir: strin
 	rmSync(target, { force: true });
 }
 
+/** Payload files are staged here, next to the staged session file, and placed from this checked copy. */
+const STAGED_PAYLOADS = ".payloads";
+
+const extensionStateFiles = (manifest: MoveManifest) =>
+	manifest.payloads.filter((payload) => payload.kind === EXTENSION_STATE_PAYLOAD).flatMap((p) => p.files);
+
+/** Copies the payload files into staging and checks each copy, so nothing changed after `verifyBundle` is placed. */
+async function stagePayloads(bundleDir: string, manifest: MoveManifest, staging: string): Promise<void> {
+	for (const file of manifest.payloads.flatMap((payload) => payload.files)) {
+		const to = join(staging, STAGED_PAYLOADS, file.path);
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(join(bundleDir, file.path), to);
+		if ((await sha256File(to)) !== file.sha256) throw new MoveBundleInvalidError(`${file.path} changed in transit`);
+	}
+}
+
+function placeExtensionState(staging: string, manifest: MoveManifest, dir: string): void {
+	const files = extensionStateFiles(manifest);
+	if (files.length === 0) return;
+	rmSync(dir, { recursive: true, force: true });
+	for (const file of files) {
+		const to = join(dir, file.path.slice(EXTENSION_STATE_PREFIX.length));
+		mkdirSync(dirname(to), { recursive: true });
+		copyFileSync(join(staging, STAGED_PAYLOADS, file.path), to);
+	}
+}
+
 async function stage(bundleDir: string, manifest: MoveManifest, staging: string, from: string): Promise<string> {
 	const file = join(staging, manifest.sessionFileName);
 	if (!(existsSync(file) && movedInFor(file, manifest.moveId))) {
@@ -141,6 +231,7 @@ async function stage(bundleDir: string, manifest: MoveManifest, staging: string,
 			mkdirSync(dirname(to), { recursive: true });
 			copyFileSync(join(bundleDir, item.path), to);
 		}
+		await stagePayloads(bundleDir, manifest, staging);
 		SessionManager.open(file, staging).appendCustomEntry(SESSION_MOVED_IN, {
 			move_id: manifest.moveId,
 			session_id: manifest.sessionId,

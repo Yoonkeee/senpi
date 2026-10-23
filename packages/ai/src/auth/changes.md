@@ -1,3 +1,21 @@
+## 2026-10-21 - ApiKeyAuth.keyOptional for providers that work without a key (senpi#3869)
+
+### What changed
+
+- `packages/ai/src/auth/types.ts`: `ApiKeyAuth` gains optional `keyOptional`. A provider sets it when it works without a key (a local server such as llama.cpp); `Models.login` then drops a blank key instead of refusing it with `EmptyApiKeyError`.
+
+### Why
+
+- senpi#3867 refuses blank API-key saves. The refusal must apply only to providers that need a key, and that has to come from provider metadata rather than a list of names (senpi#3869 review).
+
+### Why an extension could not handle it
+
+- `Models.login` reads the flag from the provider's auth contract, which lives in `pi-ai`.
+
+### Expected merge conflict zones
+
+- LOW: the field list of `ApiKeyAuth` next to `ambientOnly`.
+
 ## 2026-10-09 - Restore auth-tracker coverage for upstream-modified paths (senpi#3006)
 
 ### What changed

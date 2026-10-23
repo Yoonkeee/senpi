@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import {
@@ -46,8 +47,8 @@ export async function classifySessionRepository(
 	return compareRepositoryIdentities(live ?? readRecordedRepositoryIdentity(sessionFile), current);
 }
 
-export function readSessionCwd(sessionFile: string): string | undefined {
-	const { cwd } = readHeaderLine(resolvePath(sessionFile)).header;
+export async function readSessionCwd(sessionFile: string): Promise<string | undefined> {
+	const { cwd } = (await readHeaderLine(resolvePath(sessionFile))).header;
 	return typeof cwd === "string" && cwd !== "" ? cwd : undefined;
 }
 
@@ -72,7 +73,7 @@ export async function rebindSessionFile(
 	const targetDir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 	const target = join(targetDir, basename(source));
 	if (target !== source && !existsSync(source) && existsSync(target)) return target;
-	const header = readHeaderBeforeLock(source, target);
+	const header = await readHeaderBeforeLock(source, target);
 	if (header === undefined) return target;
 	return withSessionMoveLock(source, header.id, () => moveSessionFile(source, target, cwd), {
 		...(options.moveLockWaitMs === undefined ? {} : { waitMs: options.moveLockWaitMs }),
@@ -82,9 +83,9 @@ export async function rebindSessionFile(
 // The lock is keyed by the session id, so the header is read before the lock is held. A concurrent rebind can finish
 // the move between the existence check and this read; the mover writes the target before it removes the source, so a
 // missing source next to an existing target means the move is already done (`undefined`).
-function readHeaderBeforeLock(source: string, target: string): SessionHeaderLine["header"] | undefined {
+async function readHeaderBeforeLock(source: string, target: string): Promise<SessionHeaderLine["header"] | undefined> {
 	try {
-		return readHeaderLine(source).header;
+		return (await readHeaderLine(source)).header;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT" && target !== source && existsSync(target))
 			return undefined;
@@ -92,24 +93,24 @@ function readHeaderBeforeLock(source: string, target: string): SessionHeaderLine
 	}
 }
 
-function moveSessionFile(source: string, target: string, cwd: string): string {
+async function moveSessionFile(source: string, target: string, cwd: string): Promise<string> {
 	if (target !== source && !existsSync(source) && existsSync(target)) return target;
-	const { header, rest } = readHeaderLine(source);
+	const { header, rest } = await readHeaderLine(source);
 	if (target !== source && existsSync(target)) {
 		throw new Error(`Cannot rebind session: ${target} already exists`);
 	}
 	const targetDir = dirname(target);
 	mkdirSync(targetDir, { recursive: true });
 	const temp = join(targetDir, `.${basename(source)}.rebind-${process.pid}.tmp`);
-	writeFileSync(temp, `${JSON.stringify({ ...header, cwd })}\n${rest}`, { flag: "wx" });
+	await writeFile(temp, `${JSON.stringify({ ...header, cwd })}\n${rest}`, { flag: "wx" });
 	if (target !== source) moveSessionSidecars(dirname(source), targetDir, header.id);
 	renameSync(temp, target);
 	if (target !== source) rmSync(source, { force: true });
 	return target;
 }
 
-function readHeaderLine(sessionFile: string): SessionHeaderLine {
-	const content = readFileSync(sessionFile, "utf8");
+async function readHeaderLine(sessionFile: string): Promise<SessionHeaderLine> {
+	const content = await readFile(sessionFile, "utf8");
 	const newline = content.indexOf("\n");
 	const firstLine = newline === -1 ? content : content.slice(0, newline);
 	let parsed: unknown;

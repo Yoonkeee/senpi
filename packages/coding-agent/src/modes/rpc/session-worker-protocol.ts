@@ -52,6 +52,7 @@ export type HostToSessionWorker =
 	| { type: "browser_engine"; request: number; engine: BrowserEngine }
 	| { type: "permission_preset"; request: number; preset: string }
 	| { type: "cancel_ui" }
+	| { type: "cancel_grant"; id: string }
 	| { type: "close" };
 
 export type SessionWorkerToHost =

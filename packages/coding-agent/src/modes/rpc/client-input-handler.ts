@@ -19,6 +19,7 @@ type PromptPathOptions = Pick<
 	| "expandPromptTemplates"
 	| "unknownCommandAsText"
 	| "enqueueOrder"
+	| "toolBarrier"
 >;
 
 type InputOutput = {
@@ -38,15 +39,19 @@ export async function handleClientInput(
 		let responded = false;
 		const respond = (admission: ClientMessageAdmission | undefined): void => {
 			responded = true;
+			const finalDisposition = admission?.disposition ?? disposition;
 			io.output({
 				id: command.id,
 				type: "response",
 				command: command.type,
 				success: true,
 				data: {
-					disposition: admission?.disposition ?? disposition,
+					disposition: finalDisposition,
 					...clientMessageIdentity(command),
 					...(admission ? { admission } : {}),
+					...(command.type === "prompt" && command.toolBarrier !== undefined
+						? { toolBarrier: finalDisposition === "started" ? "armed" : "ignored" }
+						: {}),
 				},
 			});
 		};
@@ -101,6 +106,7 @@ export async function handleClientInput(
 							sessionTitlePrompt: command.sessionTitlePrompt,
 							expandPromptTemplates: command.expandPromptTemplates,
 							unknownCommandAsText: command.unknownCommandAsText,
+							toolBarrier: command.toolBarrier,
 						});
 					}
 					case "steer":

@@ -77,12 +77,13 @@ describe("RpcClient.setSessionContext", () => {
 		await expect(refused).rejects.toMatchObject({ errorCode: "session_not_attached" });
 	});
 
-	it("refuses without a session instead of sending an unroutable command", async () => {
+	it("refuses without a session with the host's session_not_attached error, sending nothing", async () => {
 		const { client, received } = await wireHost(() => ({ success: true }));
 
-		await expect(client.setSessionContext({ task_status: "completed" })).rejects.toThrow(
-			"set_session_context needs a session",
-		);
+		const refused = client.setSessionContext({ task_status: "completed" });
+
+		await expect(refused).rejects.toBeInstanceOf(RpcCommandError);
+		await expect(refused).rejects.toMatchObject({ errorCode: "session_not_attached" });
 		expect(received.some((command) => command.type === "set_session_context")).toBe(false);
 	});
 });

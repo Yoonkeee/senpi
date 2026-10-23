@@ -128,6 +128,8 @@ export interface HarnessOptions {
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	extensionFlagValues?: Map<string, boolean | string>;
 	withConfiguredAuth?: boolean;
+	/** Credential store for the session; the caller seeds it, so the faux key is not written. */
+	authStorage?: AuthStorage;
 	upstreamModelId?: string;
 	serviceTier?: "auto" | "flex" | "priority" | "ultrafast";
 	onPayload?: (payload: unknown) => void;
@@ -221,8 +223,8 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		? SettingsManager.create(tempDir, agentDir)
 		: SettingsManager.inMemory(options.settings);
 
-	const authStorage = sibling?.authStorage ?? AuthStorage.inMemory();
-	if (withConfiguredAuth && !sibling) {
+	const authStorage = sibling?.authStorage ?? options.authStorage ?? AuthStorage.inMemory();
+	if (withConfiguredAuth && !sibling && !options.authStorage) {
 		await authStorage.modify(model.provider, async () => ({ type: "api_key", key: "faux-key" }));
 	}
 	const modelsPath = options.modelsJson === undefined ? undefined : join(tempDir, "models.json");

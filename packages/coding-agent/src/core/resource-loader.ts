@@ -59,6 +59,7 @@ import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
 import { memoizeResolvedPaths, resolvedPathsMemoKey } from "./resolved-paths-memo.ts";
 import { SettingsManager } from "./settings-manager.ts";
+import type { SkillProvenance } from "./skill-access.ts";
 import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
 import { warnIfLargeSkillCatalog } from "./skills-prompt.ts";
@@ -683,6 +684,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			await this.settingsManager.reload();
 		}
 		const { resolvedPaths, cliExtensionPaths } = await this.resolvePackagePaths({ refresh });
+		this.userSkillRoots = [...(resolvedPaths.skillRoots ?? []), ...(cliExtensionPaths.skillRoots ?? [])]
+			.filter((selection) => selection.kind === "user")
+			.map((selection) => selection.selectedRoot);
 		time("packageResolve", "extensions");
 		// Keep package metadata available for later extendResources() passes.
 		this.resourceMetadataByPath = new Map();
@@ -717,8 +721,25 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// itself part of the harness keeps the system scope and root it resolved to.
 		const cliMetadata = (resource: ResolvedResource): PathMetadata =>
 			resource.metadata.scope === "system"
-				? { source: "cli", scope: "system", origin: "top-level", baseDir: resource.metadata.baseDir }
-				: { source: "cli", scope: "temporary", origin: "top-level" };
+				? {
+						source: "cli",
+						scope: "system",
+						origin: "top-level",
+						baseDir: resource.metadata.baseDir,
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					}
+				: {
+						source: "cli",
+						scope: "temporary",
+						origin: "top-level",
+						skillProvenance: {
+							kind: "user",
+							selectedRoot: resource.metadata.skillProvenance?.selectedRoot ?? resource.path,
+						},
+					};
 		for (const resources of [
 			cliExtensionPaths.extensions,
 			cliExtensionPaths.skills,
@@ -1128,6 +1149,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		};
 	}
 
+	private userSkillRoots: string[] = [];
 	private updateSkillsFromPaths(skillPaths: string[], metadataByPath?: Map<string, PathMetadata>): void {
 		let skillsResult: { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 		if (this.noSkills && skillPaths.length === 0) {
@@ -1138,6 +1160,18 @@ export class DefaultResourceLoader implements ResourceLoader {
 				agentDir: this.agentDir,
 				skillPaths,
 				includeDefaults: false,
+				provenanceByPath: new Map<string, SkillProvenance>(
+					skillPaths.map((path) => [
+						path,
+						metadataByPath?.get(path)?.skillProvenance ?? { kind: "user", selectedRoot: path },
+					]),
+				),
+				userSkillRoots: [
+					...this.userSkillRoots,
+					...(this.settingsManager.getGlobalSettings().skills ?? [])
+						.filter((path) => !/^[!+-]/.test(path))
+						.map((path) => resolvePath(path, this.agentDir, { trim: true })),
+				],
 			});
 		}
 		const resolvedSkills = this.skillsOverride ? this.skillsOverride(skillsResult) : skillsResult;

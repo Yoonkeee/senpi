@@ -42,9 +42,11 @@ export type PinSource = "cli" | "settings" | "stored";
 export class AllAccountsBlockedError extends Error {
 	readonly soonestUnblockAt: number | undefined;
 	/**
-	 * Dominant block reason, set when at least one slot is auth-blocked, so the
-	 * guidance and the outer credential-pool classifier read the cause instead
-	 * of guessing it from prose (omo#8383).
+	 * Set only when EVERY candidate is auth-blocked, so the guidance asks for a
+	 * re-login (omo#8383). A pool where any account waits on a deadline (a rate
+	 * limit, a usage reset, a model limit) recovers on its own at
+	 * `soonestUnblockAt`, and calling it an auth failure made that temporary
+	 * block look permanent (senpi#2081).
 	 */
 	readonly blockReason: "auth_error" | undefined;
 	/**
@@ -201,7 +203,9 @@ export function selectAccount(accounts: readonly AccountSlot[], options: Affinit
 	if (afterClear) return afterClear;
 	throw new AllAccountsBlockedError(
 		soonestUnblockAt(candidates, now, options.model),
-		candidates.some((account) => account.blockReason === "auth_error") ? "auth_error" : undefined,
+		candidates.length > 0 && candidates.every((account) => account.blockReason === "auth_error")
+			? "auth_error"
+			: undefined,
 		limitedModel(candidates, now, options.model),
 		unavailableAccount,
 	);

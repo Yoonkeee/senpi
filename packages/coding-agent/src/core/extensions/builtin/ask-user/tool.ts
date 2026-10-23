@@ -1,8 +1,14 @@
 import { releaseQuestionInput } from "../../../question-input.ts";
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "../../types.ts";
+import type { ExtensionAPI, ExtensionContext, QuestionCancelOrigin, ToolDefinition } from "../../types.ts";
 import { WAKE_SOURCE_STATE_EVENT, type WakeSourceStateEvent } from "../monitor-state-event.ts";
 import { TOOL_NAMES } from "./family.ts";
-import { formatGatedCancellation, formatModelAnswer, formatResultDetails, formatUserMessage } from "./format.ts";
+import {
+	formatGatedCancellation,
+	formatModelAnswer,
+	formatResultDetails,
+	formatUserMessage,
+	showsPartialAnswers,
+} from "./format.ts";
 import {
 	ASK_USER_ASKED_EVENT,
 	ASK_USER_QUESTION_ENTRY,
@@ -61,7 +67,8 @@ function result(
  * the question; a surface that delivered on its own would send it twice. It
  * steers into a running turn and follows up when idle - a follow-up always
  * triggers a turn, which is what wakes the model after a timeout. A cancelled
- * question stays silent: it was dismissed, superseded, or aborted.
+ * question stays silent unless `showsPartialAnswers` holds: the user chose the
+ * cancel (or its UI failed) after answering part of it, and those answers go out.
  */
 export function deliverAnswer(
 	pi: Pick<ExtensionAPI, "sendUserMessage" | "events">,
@@ -70,11 +77,12 @@ export function deliverAnswer(
 	response: QuestionResponse,
 	variant: "codex" | "claude",
 ): void {
-	if (response.status === "cancelled") return;
+	if (response.status === "cancelled" && !showsPartialAnswers(response)) return;
 	const content = formatUserMessage(response, request.requestId, request.questions, request.required === true);
 	const options = { deliverAs: ctx.isIdle() ? ("followUp" as const) : ("steer" as const) };
 	if (response.status === "answered" || response.status === "comment-submitted") releaseQuestionInput(ctx);
 	pi.sendUserMessage(content, options);
+	if (response.status === "cancelled") return;
 	void emitAskUserNotification(pi, ctx, request, response, variant);
 }
 function emitWake(pi: Pick<ExtensionAPI, "events">, sessionId: string) {
@@ -166,13 +174,17 @@ export function startQuestion(
 		idleTimeoutMs: request.timeoutMs,
 		onTimeout: finish,
 	});
-	const cancel = (message?: string, reportDetachedLoss = false) => {
+	const cancel = (origin: QuestionCancelOrigin, message?: string, reportDetachedLoss = false) => {
 		const lost = !attached && reportDetachedLoss;
 		const response = pending.cancel(lost ? "orphaned-after-restart" : "cancelled");
-		finish(message ? { ...response, comment: message } : response);
+		finish({
+			...response,
+			...(message ? { comment: message } : {}),
+			...(response.status === "cancelled" ? { cancelOrigin: origin } : {}),
+		});
 		if (lost) notify(message ?? "The pending question could not be restored.", "error");
 	};
-	const abort = () => cancel();
+	const abort = () => cancel("turn_abort");
 	unregister = registerPendingQuestion(sessionId, {
 		request,
 		pending,
@@ -227,6 +239,19 @@ export function startQuestion(
 	};
 	const accept = (response: QuestionResponse) => {
 		if (settled) return;
+		if (response.status === "cancelled") {
+			// Another client's cancel through a terminal's control endpoint carries no answers: it keeps the
+			// draft the UI reported as progress instead of wiping it. A cancel that carries answers updates it.
+			// This holds for every cancel without answers, lifecycle ones included; `showsPartialAnswers` alone
+			// decides whether the kept draft reaches the model, so a lifecycle cancel stays silent.
+			if (Object.keys(response.answers).length > 0 || response.comment !== undefined)
+				pending.touch({ answers: response.answers, comment: response.comment });
+			const cancelled = pending.cancel("cancelled");
+			finish(
+				response.cancelOrigin !== undefined ? { ...cancelled, cancelOrigin: response.cancelOrigin } : cancelled,
+			);
+			return;
+		}
 		pending.touch({ answers: response.answers, comment: response.comment });
 		if (response.status === "timed_out") {
 			finish(response);
@@ -248,7 +273,7 @@ export function startQuestion(
 			ctx.ui.notify(message, "error");
 			return;
 		}
-		cancel(message);
+		cancel("ui_failure", message);
 		ctx.ui.notify(message, "error");
 	};
 	const attach = () => {
@@ -297,6 +322,7 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 			: "Ask the user one to four concise questions.";
 	return {
 		name: TOOL_NAMES[variant],
+		workspaceEffect: "read",
 		label: "Ask user",
 		exposure: "direct",
 		allowLazyActivation: false,
@@ -358,7 +384,9 @@ export function createAskUserTool(variant: AskUserVariant, pi: ExtensionAPI, sta
 				response.status === "cancelled" && response.comment
 					? request.required === true
 						? formatGatedCancellation(response.comment, response, request.requestId, request.questions)
-						: response.comment
+						: showsPartialAnswers(response)
+							? undefined
+							: response.comment
 					: undefined,
 			);
 		},

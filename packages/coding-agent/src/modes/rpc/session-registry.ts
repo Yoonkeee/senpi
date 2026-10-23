@@ -63,6 +63,11 @@ export class RpcSessionRegistry {
 	/** Present only when the runtime factory can build a session's services alone (`host-warm.ts`). */
 	readonly warm?: HostWarm;
 
+	/** The agent directory this host keeps its sessions (and session-move folders) under. */
+	get agentDir(): string {
+		return this.options.agentDir;
+	}
+
 	constructor(options: RpcSessionRegistryOptions) {
 		if (options.createRuntime.prepare)
 			this.warm = createRegistryWarm(options.createRuntime.prepare, {
@@ -276,7 +281,7 @@ export class RpcSessionRegistry {
 		if (!entry) throw new RpcSessionRegistryError("unknown_session");
 		if (
 			entry.state === "closing" &&
-			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress"].includes(command)
+			!["abort", "abort_bash", "extension_ui_response", "extension_ui_progress", "host_response"].includes(command)
 		) {
 			throw new RpcSessionRegistryError("session_closing");
 		}

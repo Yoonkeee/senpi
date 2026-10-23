@@ -24,6 +24,7 @@ import { cleanupMcpOutputArtifacts, McpOutputArtifacts } from "./guard/output-gu
 import { HostMcpRegistry } from "./host-registry.ts";
 import { refreshMcpInstructionsForSession } from "./instructions.ts";
 import { createMcpLogger } from "./log.ts";
+import { prepareProjectSkillServer } from "./project-skill-policy.ts";
 import { reconnectMcpNow } from "./reconnect.ts";
 import type { McpResourceServer } from "./resources.ts";
 import { createMcpSessionConnection, disposeEntryConnection } from "./service-connection.ts";
@@ -55,14 +56,17 @@ import {
 	type McpStartupRaceResult,
 	raceMcpStartupConnect,
 	shouldRaceMcpStartup,
+	waitForMcpStartupRace,
 } from "./startup-race.ts";
 import { safeTimer } from "./wrap.ts";
 
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 type ListedResource = Awaited<ReturnType<Client["listResources"]>>["resources"][number];
 type ListedResourceTemplate = Awaited<ReturnType<Client["listResourceTemplates"]>>["resourceTemplates"][number];
-type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm">;
-type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">;
+type McpElicitationUi = Pick<ExtensionUIContext, "input" | "select" | "confirm"> &
+	Partial<Pick<ExtensionUIContext, "notify">>;
+type McpToolRegistrar = Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool"> &
+	Partial<Pick<ExtensionAPI, "events">>;
 
 /**
  * One live session's binding to the service (#2514): the session's own extension API and
@@ -139,7 +143,7 @@ export class McpService {
 	async attachSession(
 		event: SessionStartEvent,
 		ctx: McpSessionContext,
-		_pi?: Pick<ExtensionAPI, "getActiveTools" | "setActiveTools" | "registerTool">,
+		_pi?: McpToolRegistrar,
 		options: McpSessionOptions = {},
 	): Promise<void> {
 		// Counted from the moment it queues, so a session's release cannot dispose the service
@@ -159,8 +163,11 @@ export class McpService {
 			// the catalog cache write past this point, and it must land in the
 			// directory this attach resolved, never wherever the environment
 			// points when the write finally runs.
-			const sessionOptions: McpSessionOptions =
-				options.agentDir === undefined ? { ...options, agentDir: getAgentDir() } : options;
+			const sessionOptions: McpSessionOptions = {
+				...options,
+				agentDir: options.agentDir ?? getAgentDir(),
+				projectTrusted: options.projectTrusted ?? ctx.isProjectTrusted(),
+			};
 			const config = loadMcpConfig({
 				agentDir: sessionOptions.agentDir,
 				cwd: ctx.cwd,
@@ -168,6 +175,20 @@ export class McpService {
 				projectTrusted: sessionOptions.projectTrusted ?? ctx.isProjectTrusted(),
 			});
 			mergeExtensionMcpServers(config, ctx.getRegisteredMcpServers?.() ?? []);
+			const previous = _pi === undefined ? undefined : this.#bindings.get(_pi);
+			if (
+				previous !== undefined &&
+				previous.sessionId === ctx.sessionManager?.getSessionId?.() &&
+				previous.options.agentDir === sessionOptions.agentDir &&
+				previous.options.env === sessionOptions.env &&
+				previous.options.projectTrusted === sessionOptions.projectTrusted
+			) {
+				// Administrative reattaches do not unload this session's skills.
+				// Dropping them here can dispose a peer's in-flight reconnect.
+				for (const [name, server] of Object.entries(previous.config.servers)) {
+					if (server.source === "skill") config.servers[name] ??= server;
+				}
+			}
 			const owner: McpConfigOwner = { config, options: sessionOptions, context: ctx };
 			const binding = _pi === undefined ? undefined : this.#bind(_pi, owner);
 			const current = this.#effectiveConfig(config);
@@ -409,6 +430,7 @@ export class McpService {
 		if (this.#config === null || binding === undefined) return [];
 		const config = binding.config;
 		const warnings: string[] = [];
+		const policyWarnings = new Map<string, string>();
 		// The declaring session's own trust and env, never those of whichever session attached last (senpi#2986).
 		const projectTrusted = binding.options.projectTrusted ?? binding.context.isProjectTrusted();
 		let added = 0;
@@ -420,11 +442,52 @@ export class McpService {
 				);
 				continue;
 			}
-			const { server: resolved, warning } = resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
-				env: binding.options.env,
-				skillName: decl.skillName,
-				trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
-			});
+			const project = decl.provenance === undefined ? decl.scope === "project" : decl.provenance.kind !== "user";
+			const result = project
+				? {
+						server: await prepareProjectSkillServer(
+							name,
+							decl,
+							{
+								context: binding.context,
+								options: binding.options,
+								ui: () => this.getMcpElicitationUi(),
+								notice: (identity, names) => {
+									// An untrusted project keeps the skill's references literal (senpi#2345); keep that fix in
+									// the one notice instead of a generic withheld line (senpi#3796).
+									const message =
+										names.length === 0
+											? ""
+											: projectTrusted
+												? `Project MCP server ${name} (skill ${decl.skillName}) withheld ${names.length} environment name(s): ${names.join(", ")}.`
+												: `Skill '${decl.skillName}' MCP server '${name}': ${names.map((variable) => `\${${variable}}`).join(", ")} stays literal because the skill comes from an untrusted project; trust the project or move the server into your own mcp.json to expand it.`;
+									binding.pi.events?.emit("security_notice", {
+										category: "mcp-env-withheld",
+										path: identity,
+										message,
+										remove: names.length === 0,
+									});
+									if (names.length === 0) {
+										policyWarnings.delete(identity);
+										return;
+									}
+									if (!this.#skillServerWarnings.has(message)) {
+										this.#skillServerWarnings.add(message);
+										policyWarnings.set(identity, message);
+										createMcpLogger("skills").warn(message);
+									}
+								},
+							},
+							existing,
+						),
+						warning: undefined,
+					}
+				: resolveSkillMcpServer(name, decl.raw, decl.sourcePath, {
+						env: binding.options.env,
+						skillName: decl.skillName,
+						trusted: decl.scope === "project" || decl.scope === undefined ? projectTrusted : true,
+					});
+			const { server: resolved, warning } = result;
 			if (warning !== undefined && !this.#skillServerWarnings.has(warning)) {
 				this.#skillServerWarnings.add(warning);
 				warnings.push(warning);
@@ -447,7 +510,7 @@ export class McpService {
 				}
 			});
 		}
-		return warnings;
+		return [...warnings, ...policyWarnings.values()];
 	}
 
 	/** Registered searchable catalog (mapped name + server-side tool name),
@@ -476,13 +539,18 @@ export class McpService {
 
 	/**
 	 * Await the startup connects the race backgrounded, bounded by `timeoutMs`.
-	 * `attachSession` resolves at the race deadline, so consumers that assemble
-	 * session state from the catalog - the first turn's system prompt - call this
-	 * to OBSERVE the attach. A `"timeout"` result means the turn goes out with
-	 * what has landed so far and the rest arrives on a later turn.
+	 * `attachSession` resolves at the race deadline, so code that must OBSERVE the
+	 * attach's catalog (tests, and hosts that watch the attach from outside; the
+	 * first turn itself awaits the attach promise in `before_agent_start`) calls
+	 * this. A `"timeout"` result means some connects are still running.
+	 *
+	 * An attach (or re-sync) still on the queue has not handed its backgrounded connects over yet, so the queue is
+	 * awaited first, within the same budget: an early call must never read an empty pending set as settled (senpi#4027).
 	 */
-	whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
-		return this.#deferredAttach.wait(timeoutMs);
+	async whenAttachSettled(timeoutMs = MCP_ATTACH_SETTLE_TIMEOUT_MS): Promise<McpStartupRaceResult> {
+		const startedAt = Date.now();
+		if ((await waitForMcpStartupRace(this.#attachQueue, timeoutMs)) === "timeout") return "timeout";
+		return this.#deferredAttach.wait(Math.max(0, timeoutMs - (Date.now() - startedAt)));
 	}
 
 	/** Subscribe to live MCP inventory transitions for session-scoped hosts. */

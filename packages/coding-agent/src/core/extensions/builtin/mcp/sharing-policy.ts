@@ -29,6 +29,13 @@ export function sharedMcpKey(options: ServerConnectionOptions, agentDir: string)
 	const { config, env } = options;
 	const bearer = config.bearerTokenEnv;
 	const identity = {
+		...(options.projectPolicy === undefined
+			? {}
+			: {
+					declarationDigest: options.projectPolicy.identity,
+					policyDigest: options.projectPolicy.policyDigest,
+					skillAuthorityDigest: options.projectPolicy.provenanceDigest,
+				}),
 		credentialIdentity: options.credentialIdentity,
 		agentDir,
 		name: options.serverName,

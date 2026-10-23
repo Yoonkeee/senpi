@@ -107,6 +107,25 @@ function coolingProbe<TSlot extends RunSlot>(slots: readonly TSlot[], attempted:
 	return soonest === undefined ? [] : [soonest];
 }
 
+/**
+ * Why the request had nowhere to go: each slot it could not use, with its reason and the time it is
+ * due back, so a refusal is never a bare "no slots" that only a re-login seemed to fix (senpi#2081).
+ */
+function noSlotsMessage(slots: readonly RunSlot[], now: number): string {
+	const blocked = slots.map((slot) => {
+		const reason = slot.blockReason ?? "blocked";
+		if (slot.blockedUntil !== undefined && slot.blockedUntil > now) {
+			return `${slot.name} (${reason} until ${new Date(slot.blockedUntil).toISOString()})`;
+		}
+		return reason === "account_disabled"
+			? `${slot.name} (account_disabled until re-login)`
+			: `${slot.name} (${reason})`;
+	});
+	return blocked.length === 0
+		? "No credential slots available"
+		: `No credential slots available: ${blocked.join(", ")}`;
+}
+
 function soonestRetryAt(slots: readonly RunSlot[], now: number): number | undefined {
 	const deadlines = slots
 		.map((slot) => slot.blockedUntil)
@@ -167,7 +186,7 @@ export async function* runCredentialFailover<TEvent, TSlot extends RunSlot>(
 				? new CredentialFailoverError(lastError.action, lastOriginal, retryAt === undefined ? {} : { retryAt })
 				: new CredentialFailoverError(
 						{ kind: "fail_request" },
-						new Error("No credential slots available"),
+						new Error(noSlotsMessage(slots, now())),
 						retryAt === undefined ? {} : { retryAt },
 					);
 		}

@@ -95,7 +95,11 @@ import { resolveChangelogSource } from "../../core/changelog-source.ts";
 import { collectEntriesForBranchSummary } from "../../core/compaction/branch-summarization.ts";
 import { findExtensionStackMatches } from "../../core/crash-log.ts";
 import { AssistantEditError, assistantTextEquals } from "../../core/edited-assistant-message.ts";
-import { askUserAnswerDisplayText, formatUserMessage } from "../../core/extensions/builtin/ask-user/format.ts";
+import {
+	askUserAnswerDisplayText,
+	formatUserMessage,
+	showsPartialAnswers,
+} from "../../core/extensions/builtin/ask-user/format.ts";
 import { askUserRenderers } from "../../core/extensions/builtin/ask-user/render.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -121,6 +125,7 @@ import { buildHighReasoningWarning } from "../../core/high-reasoning-warning.ts"
 import { configureHttpDispatcher, formatHttpIdleTimeoutMs } from "../../core/http-dispatcher.ts";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.ts";
 import { isManualContinueSubmission } from "../../core/manual-continue.ts";
+import { attachMcpGrantPresentation } from "../../core/mcp-grant-presentations.ts";
 import { createCompactionSummaryMessage, createCustomMessage } from "../../core/messages.ts";
 import type { ModelChangeOrigin } from "../../core/model-change-origin.ts";
 import {
@@ -282,6 +287,7 @@ import {
 	replayedModelChangeNotice,
 } from "./model-change-notice.ts";
 import { getModelSearchText } from "./model-search.ts";
+import { PAUSE_STATUS_KEY, pauseFooterText, resumeCommandTarget } from "./pause-footer.ts";
 import {
 	isNetworkProviderError,
 	isNetworkProviderMessage,
@@ -2686,7 +2692,9 @@ export class InteractiveMode {
 				);
 			}
 
-			const skillDiagnostics = skillsResult.diagnostics.filter((diagnostic) => diagnostic.category !== "size-limit");
+			const skillDiagnostics = skillsResult.diagnostics.filter(
+				(diagnostic) => diagnostic.category !== "size-limit" && diagnostic.category !== "skill-link-blocked",
+			);
 			if (skillDiagnostics.length > 0) {
 				addDiagnosticNotice("Skill conflicts", skillDiagnostics);
 			}
@@ -2726,10 +2734,20 @@ export class InteractiveMode {
 	/**
 	 * Initialize the extension system with TUI-based UI context.
 	 */
+	private unsubscribeSecurityNotices?: () => void;
+	private detachMcpGrantPresentation?: () => void;
 	private async bindCurrentSessionExtensions(): Promise<void> {
 		await this.sessionControlHost?.disposeActive();
 		this.session.setControlEndpointHost?.(this.sessionControlHost);
 		const uiContext = this.createExtensionUIContext();
+		this.detachMcpGrantPresentation?.();
+		this.detachMcpGrantPresentation = attachMcpGrantPresentation(this.session.sessionId, (title, choices, opts) =>
+			uiContext.select(title, choices, opts),
+		);
+		this.unsubscribeSecurityNotices?.();
+		this.unsubscribeSecurityNotices = this.session.securityNotices?.subscribe((snapshot) => {
+			for (const notice of snapshot.notices) uiContext.notify(notice.message, "warning");
+		});
 		await this.session.bindExtensions({
 			uiContext,
 			mode: "tui",
@@ -4197,14 +4215,17 @@ export class InteractiveMode {
 		if (argument === "skip") {
 			const response: QuestionResponse = {
 				status: "cancelled",
+				cancelOrigin: "user",
 				answers: state.draft.answers ?? {},
 				unanswered: unansweredIds(state.request, state.draft),
 			};
 			state.finish(response);
 			await state.completion;
 			this.showStatus("The user dismissed the question.");
-			// Ordinary cancellation/abort stays silent in the builtin. Only this
-			// explicit command acknowledges dismissal, including on host bridges.
+			// The builtin delivers the partial answers of a cancel the user chose; sending them here too
+			// would reach the model twice. With nothing answered the builtin stays silent, so this
+			// explicit command acknowledges the dismissal, including on host bridges.
+			if (showsPartialAnswers(response)) return;
 			await this.session.sendUserMessage(
 				formatUserMessage(
 					response,
@@ -5031,6 +5052,11 @@ export class InteractiveMode {
 					this.editor.setText("");
 					return;
 				}
+				if (text === "/resume" && resumeCommandTarget(this.session) === "resume_session") {
+					this.editor.setText("");
+					await this.session.resumeSession();
+					return;
+				}
 				if (text === "/resume" || text === "/sessions") {
 					this.showSessionSelector();
 					this.editor.setText("");
@@ -5774,6 +5800,12 @@ export class InteractiveMode {
 				if (notice !== undefined) this.addModelChangeNotice(notice);
 				break;
 			}
+
+			case "session_paused":
+			case "session_resumed":
+			case "session_notice":
+				this.setExtensionStatus(PAUSE_STATUS_KEY, pauseFooterText(this.session));
+				break;
 
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
@@ -7426,7 +7458,7 @@ export class InteractiveMode {
 		});
 		const allQueued = ordered?.map((message) => message.text) ?? [...steering, ...followUp];
 		this.updatePendingMessagesDisplay();
-		await this.session.abort();
+		await this.session.stop();
 
 		if (allQueued.length === 0) {
 			return 0;
@@ -7714,6 +7746,7 @@ export class InteractiveMode {
 	private async showSettingsSelector(): Promise<void> {
 		const availableThinkingLevels = this.session.getAvailableThinkingLevels();
 		this.showSelector((done) => {
+			// oxlint-disable-next-line eslint/prefer-const -- a closure reads it; const would throw in the TDZ if that closure ran before the assignment, so the rewrite is reviewed separately
 			let selector: SettingsSelectorComponent | undefined;
 			selector = new SettingsSelectorComponent(
 				{

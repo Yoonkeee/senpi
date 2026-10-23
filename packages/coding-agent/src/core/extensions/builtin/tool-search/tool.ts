@@ -41,6 +41,7 @@ type ToolSearchTool = ToolDefinition<typeof ParamsSchema, ToolSearchDetails, unk
 export function createToolSearchTool(service: ToolSearchService): ToolSearchTool {
 	return {
 		name: TOOL_SEARCH_TOOL_NAME,
+		workspaceEffect: "read",
 		label: "Tool search",
 		description:
 			"Search the catalog of deferred tools by capability. Returns matching tool names with their parameter schemas and never changes your active tool set; call a returned tool by name and it activates on that first call.",

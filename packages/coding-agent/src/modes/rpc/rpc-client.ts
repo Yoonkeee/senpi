@@ -73,7 +73,7 @@ import type {
 	RpcSlashCommand,
 	RpcUnloadAnswer,
 } from "./rpc-types.ts";
-import { RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
+import { RPC_ERROR_SESSION_NOT_ATTACHED, RPC_ERROR_UNKNOWN_COMMAND } from "./rpc-types.ts";
 import {
 	readSocketSecret,
 	resolveSocketTransportAddress,
@@ -523,6 +523,32 @@ export class RpcClient {
 		await this.send({ type: "resume_session" });
 	}
 
+	/**
+	 * Task-parent run controls (senpi#3811), sent on a `task_parent` connection. A refusal the engine answers as an
+	 * error (`wrong_parent`, `task_parent_required`) throws with its message; a stale release is an answer.
+	 */
+	async pauseForRun(
+		command: Omit<Extract<RpcCommand, { type: "pause_for_run" }>, "type" | "id">,
+	): Promise<{ held: true; childSeq: number }> {
+		return this.getData<{ held: true; childSeq: number }>(await this.send({ ...command, type: "pause_for_run" }));
+	}
+
+	async resumeForRun(command: Omit<Extract<RpcCommand, { type: "resume_for_run" }>, "type" | "id">): Promise<{
+		released: boolean;
+		reason?: "stale" | "not_held";
+		otherHoldLive?: boolean;
+		turnId?: string;
+	}> {
+		return this.getData(await this.send({ ...command, type: "resume_for_run" }));
+	}
+
+	/** Human input held for a paused session; from a task parent it names the parent session that paused the child. */
+	async holdInput(
+		command: Omit<Extract<RpcCommand, { type: "hold_input" }>, "type" | "id">,
+	): Promise<{ entryId?: string; duplicate?: boolean; alreadyDelivered?: boolean }> {
+		return this.getData(await this.send({ ...command, type: "hold_input" }));
+	}
+
 	/** Draft update for an open `question` request; fire-and-forget like the response. */
 	async sendExtensionUIProgress(progress: RpcExtensionUIProgress): Promise<void> {
 		await this.send(progress, true, undefined, false);
@@ -541,13 +567,23 @@ export class RpcClient {
 
 	/**
 	 * Patch the context the attached session publishes (`set_session_context`); `null` deletes a key.
-	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`).
+	 * Rejects with {@link RpcCommandError} carrying the host's code (`session_not_attached`, `invalid_session_context`);
+	 * a client with no attached session and no `sessionId` refuses locally with the same `session_not_attached` code.
 	 */
 	async setSessionContext(
 		patch: Record<string, string | number | boolean | null>,
 		sessionId = this.sessionId,
 	): Promise<void> {
-		if (!sessionId) throw new Error("set_session_context needs a session");
+		if (!sessionId) {
+			throw new RpcCommandError(
+				`${RPC_ERROR_SESSION_NOT_ATTACHED}: set_session_context needs a session`,
+				RPC_ERROR_SESSION_NOT_ATTACHED,
+				{
+					reason: "this client has no attached session",
+					action: "attach with openSession first, or pass a sessionId",
+				},
+			);
+		}
 		this.getData(await this.send({ type: "set_session_context", sessionId, patch }, false));
 	}
 

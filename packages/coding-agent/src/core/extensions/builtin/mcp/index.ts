@@ -153,7 +153,12 @@ export function createMcpExtension(service: McpService, sessionOwned = true): Ex
 						...skillDecls.warnings,
 						...(skillDecls.servers.size > 0 ? await service.attachSkillMcpServers(skillDecls.servers, pi) : []),
 					];
-					for (const warning of warnings) createMcpLogger("skills").warn(warning);
+					for (const warning of warnings) {
+						if (!warning.startsWith("Project MCP server")) createMcpLogger("skills").warn(warning);
+						if (warning.startsWith("Blocked skill link")) {
+							pi.events.emit("security_notice", { category: "skill-link-blocked", message: warning });
+						}
+					}
 				}
 				// Use the known instructions now. Deferred catalog registration refreshes
 				// the service for subsequent turns instead of gating this provider request.

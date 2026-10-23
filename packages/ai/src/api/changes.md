@@ -50,6 +50,25 @@
 - LOW: `packages/ai/src/api/google-generative-ai.ts`, the `reasoning` line of the usage object.
 - LOW: `packages/ai/src/api/google-vertex.ts`, the `reasoning` line of the usage object.
 
+## 2026-10-22 - Replace Biome with oxlint and oxfmt (senpi#3976)
+
+### What changed
+
+- `packages/ai/src/api/google-shared.ts`: the empty `providerNative` branch gains a comment saying those blocks are not replayed to Google (oxlint `no-lone-blocks`).
+- `packages/ai/src/api/openai-completions.ts`: an `oxlint-disable-next-line eslint/no-unassigned-vars` comment on `streamedReasoningDetails`, citing senpi#3934, which tracks the lost serialize-once.
+
+### Why
+
+- The repository moved lint and format from Biome to oxlint 1.89.0 and oxfmt 0.74.0 (senpi#3976). oxlint reports this site where Biome did not; the change keeps behaviour identical.
+
+### Why an extension could not handle it
+
+- Lint configuration and source comments are read by the linter before any agent code runs.
+
+### Expected merge conflict zones
+
+- The `providerNative` branch of the Google message conversion and the reasoning-details declaration in `openai-completions.ts`. senpi#3934 removes the disable comment when it restores the assignment.
+
 ## 2026-10-21 - Responses cache affinity follows the stable prefix (omo#10775)
 
 ### What changed

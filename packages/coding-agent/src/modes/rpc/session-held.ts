@@ -49,6 +49,7 @@ const READ_ONLY_OR_CONTROL = new Set<RpcInboundRecord["type"]>([
 	"set_client_info",
 	"extension_ui_response",
 	"extension_ui_progress",
+	"host_response",
 ]);
 
 /** One bounded identity snapshot for all foreign PIDs, never one subprocess per lease. */

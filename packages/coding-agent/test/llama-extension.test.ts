@@ -1,10 +1,18 @@
 import { once } from "node:events";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { AuthContext, AuthPrompt, ModelsPublication, ModelsStoreEntry } from "@earendil-works/pi-ai";
+import {
+	type AuthContext,
+	type AuthPrompt,
+	createModels,
+	InMemoryCredentialStore,
+	type ModelsPublication,
+	type ModelsStoreEntry,
+} from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
+import { composeApiKeyAuth } from "../src/core/provider-api-key-auth.ts";
 import { LlamaClient, type LlamaProgress, normalizeLlamaServerUrl } from "../src/extensions/llama/client.ts";
 import { findHuggingFaceToken, HuggingFaceClient } from "../src/extensions/llama/huggingface.ts";
 import llamaExtension from "../src/extensions/llama/index.ts";
@@ -440,6 +448,89 @@ describe("llama.cpp extension", () => {
 			auth: { apiKey: "secret", baseUrl: `${url}/v1` },
 			env: { LLAMA_BASE_URL: url },
 			source: "stored credential",
+		});
+	});
+
+	it("logs in through Models.login with no API key and stores only the server URL (#3869)", async () => {
+		const { provider } = createLlamaProvider();
+		const { url } = await listen((_request, response) => json(response, { data: [] }));
+		const store = new InMemoryCredentialStore();
+		const models = createModels({ credentials: store });
+		models.setProvider(provider);
+		const answers = [url, ""];
+
+		await models.login(LLAMA_PROVIDER_ID, "api_key", {
+			signal: AbortSignal.timeout(5_000),
+			prompt: async (_prompt: AuthPrompt) => answers.shift()!,
+			notify: () => {},
+		});
+
+		const stored = await store.read(LLAMA_PROVIDER_ID);
+		expect(stored).toEqual({ type: "api_key", env: { LLAMA_BASE_URL: url } });
+		expect(Object.hasOwn(stored ?? {}, "key")).toBe(false);
+	});
+
+	it("keeps keyOptional when models.json or an overlay composes the llama provider (#3869)", () => {
+		const { provider } = createLlamaProvider();
+
+		const composed = composeApiKeyAuth(
+			LLAMA_PROVIDER_ID,
+			provider,
+			{ baseUrl: "http://127.0.0.1:8080/v1" },
+			undefined,
+		);
+
+		expect(composed?.keyOptional).toBe(true);
+	});
+
+	describe("keyless login on the resolved provider after models.json / overlay composition (#3869)", () => {
+		async function loginBlank(providerId: string, apiKey: ReturnType<typeof composeApiKeyAuth>, answers: string[]) {
+			const { provider } = createLlamaProvider();
+			const store = new InMemoryCredentialStore();
+			const models = createModels({ credentials: store });
+			models.setProvider({ ...provider, id: providerId, auth: { ...provider.auth, apiKey } });
+			const login = models.login(providerId, "api_key", {
+				signal: AbortSignal.timeout(5_000),
+				prompt: async (_prompt: AuthPrompt) => answers.shift() ?? "",
+				notify: () => {},
+			});
+			return { login, store };
+		}
+
+		it("accepts a blank key for llama with a models.json entry", async () => {
+			const { provider } = createLlamaProvider();
+			const { url } = await listen((_request, response) => json(response, { data: [] }));
+			const composed = composeApiKeyAuth(LLAMA_PROVIDER_ID, provider, { baseUrl: `${url}/v1` }, undefined);
+
+			const { login, store } = await loginBlank(LLAMA_PROVIDER_ID, composed, [url, ""]);
+			await login;
+
+			expect(await store.read(LLAMA_PROVIDER_ID)).toEqual({ type: "api_key", env: { LLAMA_BASE_URL: url } });
+		});
+
+		it("accepts a blank key for llama with an extension overlay", async () => {
+			const { provider } = createLlamaProvider();
+			const { url } = await listen((_request, response) => json(response, { data: [] }));
+			const composed = composeApiKeyAuth(LLAMA_PROVIDER_ID, provider, undefined, { headers: { "x-overlay": "1" } });
+
+			const { login, store } = await loginBlank(LLAMA_PROVIDER_ID, composed, [url, ""]);
+			await login;
+
+			expect(await store.read(LLAMA_PROVIDER_ID)).toEqual({ type: "api_key", env: { LLAMA_BASE_URL: url } });
+		});
+
+		it("still refuses a blank key for a models.json provider that requires one", async () => {
+			const composed = composeApiKeyAuth(
+				"keyed-custom",
+				undefined,
+				{ baseUrl: "https://keyed.example/v1" },
+				undefined,
+			);
+
+			const { login, store } = await loginBlank("keyed-custom", composed, [""]);
+
+			await expect(login).rejects.toMatchObject({ name: "EmptyApiKeyError" });
+			expect(await store.read("keyed-custom")).toBeUndefined();
 		});
 	});
 
