@@ -103,7 +103,7 @@ export function createMcpResourceTools(servers: () => readonly McpResourceServer
 			const lines = scoped.flatMap((entry) =>
 				entry.resources.map(
 					(resource) =>
-						`- @mcp:${entry.server}/${resource.uri} — ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
+						`- @mcp:${entry.server}/${resource.uri} - ${resource.name ?? resource.uri}${resource.mimeType ? ` (${resource.mimeType})` : ""}`,
 				),
 			);
 			const text = lines.length === 0 ? "No MCP resources available." : lines.join("\n");

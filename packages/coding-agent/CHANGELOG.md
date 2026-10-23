@@ -17,10 +17,13 @@
 
 ### Changed
 
+- CLI/TUI labels, tool messages, and agent prompts use periods, commas, colons, or parentheses instead of em dashes; unknown session values use `-`. Product-copy lint prevents regressions, and lint/type suppressions must explain why they are needed ([#4040](https://github.com/code-yeongyu/senpi/issues/4040)).
+
 - `release_session` refuses `attached` only while ANOTHER client is attached; the connection asking for the release no longer counts, so a client can release (or move) the session it shows without `force`. `errorData.attachments` now counts only those other clients ([#3994](https://github.com/code-yeongyu/senpi/pull/3994)).
 
 ### Fixed
 
+- Subscription limits: a background usage poll no longer locks a healthy Claude login when the token refresh fails with something other than a rejection (an HTML error page, a network error); only `invalid_grant` or a 400/401 from the token endpoint asks you to run `/login`. A failed poll also keeps the account's plan in the shared cache, so another process reading it still shows the plan ([#3695](https://github.com/code-yeongyu/senpi/issues/3695)).
 - A `models.json` `models[]` entry that repeats a built-in model without `cost` keeps the built-in price instead of billing at $0, and a custom model with no price anywhere reports its cost as unknown (no `$` amount) instead of $0; `hideFreeModels` no longer hides such a model ([#3844](https://github.com/code-yeongyu/senpi/issues/3844)).
 - An RPC session whose worker dies before it finishes opening (for example a worker that cannot load its modules) now fails with `open_failed` and the worker's error, instead of `session_closing` ([#4037](https://github.com/code-yeongyu/senpi/issues/4037)).
 - The RPC host's cleanup of leftover internal socket directories under `/tmp` now only removes the current user's directories, scans a `TMPDIR` that is `/tmp` once, and a socket path that fits nowhere names every location it tried ([#3487](https://github.com/code-yeongyu/senpi/issues/3487)).
@@ -38,6 +41,7 @@
 - An image-only queued steer or follow-up now leaves the queue once it is delivered, instead of staying listed in the queue display and RPC queue snapshots ([#3592](https://github.com/code-yeongyu/senpi/issues/3592)).
 - Compaction: when a long session overflowed the context window (or needed a required compaction before a prompt), the summary request could itself exceed the same window, so the compaction and overflow recovery could never succeed. The summarizer input is now bounded to fit the window, dropping the oldest history first, and shrinks on a provider overflow; the summary request then says how many earlier messages it left out ([#4032](https://github.com/code-yeongyu/senpi/issues/4032)).
 - Compaction: when a single long turn came close to the context window and the compaction cut fell inside it, the summary request for that turn's first part could exceed the same window, so the compaction failed and the session could never compact. That request is now bounded like the history summary: the turn's request is kept, its oldest tool steps are left out first, and the summary says how many ([#4079](https://github.com/code-yeongyu/senpi/issues/4079)).
+- The queued-message warning (`queued_input_outlived_run`) no longer fires when a turn ends without finishing, such as a retry stopped during its backoff; it reports only messages still waiting after a turn that finished normally ([#4064](https://github.com/code-yeongyu/senpi/issues/4064)).
 - `AGENTS.override.md` now also replaces the `AGENTS.md` / `CLAUDE.md` in its directory for project rules and nested `AGENTS.md` injection, not only for startup context files. The shadowed files no longer reach the model through the project-rules block or on file reads ([#3948](https://github.com/code-yeongyu/senpi/issues/3948)).
 
 ### Removed

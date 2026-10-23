@@ -101,7 +101,7 @@ export function renderQuestionLine(question: Question): string {
 	return (
 		INDENT +
 		theme.fg("text", theme.bold(question.header)) +
-		theme.fg("muted", " — ") +
+		theme.fg("muted", " - ") +
 		theme.fg("text", question.question)
 	);
 }

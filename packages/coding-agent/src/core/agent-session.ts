@@ -7918,9 +7918,11 @@ export class AgentSession {
 	/** Queued input that a whole turn started after and settled without delivering is overdue: say so (#4036). */
 	private _warnQueuedInputOutlivingRun(agentEnd: AgentEvent | undefined): void {
 		// A failed or aborted turn keeps queued input for the next prompt by design, so it proves nothing is stuck;
-		// the next turn that ends normally still catches input that really is.
-		const settledMessages = agentEnd?.type === "agent_end" ? agentEnd.messages : this.agent.state.messages;
-		const lastAssistant = settledMessages.findLast((message) => message.role === "assistant");
+		// the next turn that ends normally still catches input that really is. A settle without an agent_end comes
+		// only from such a turn (the prompt threw, a continuation failed, a retry was aborted in its backoff), and the
+		// transcript would show an earlier turn's outcome instead, so it is never judged (senpi#4064).
+		if (agentEnd?.type !== "agent_end") return;
+		const lastAssistant = agentEnd.messages.findLast((message) => message.role === "assistant");
 		if (lastAssistant?.role === "assistant" && (lastAssistant.stopReason === "error" || lastAssistant.stopReason === "aborted")) {
 			return;
 		}

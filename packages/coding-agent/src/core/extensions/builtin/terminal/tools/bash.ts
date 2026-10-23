@@ -339,7 +339,7 @@ async function runForeground(
 				? `not killed; the original ${input.timeout}s timeout still applies`
 				: "not killed; it will run until exit or kill_bash";
 		const guidance = sleepWait
-			? `This command is a wait (${sleepWait.seconds}s sleep), so it detached immediately; the wait continues in the background. Do nothing and end your turn — completion will be reported automatically with exit status and output tail. Do NOT poll bash_output({ bash_id: "${id}" }) for it. When you are waiting for a pattern in a command's output, launch it with monitor({ command, filter }) instead so matching lines arrive as events. Use kill_bash({ bash_id: "${id}" }) to stop this session.`
+			? `This command is a wait (${sleepWait.seconds}s sleep), so it detached immediately; the wait continues in the background. Do nothing and end your turn: completion will be reported automatically with exit status and output tail. Do NOT poll bash_output({ bash_id: "${id}" }) for it. When you are waiting for a pattern in a command's output, launch it with monitor({ command, filter }) instead so matching lines arrive as events. Use kill_bash({ bash_id: "${id}" }) to stop this session.`
 			: `Continue other work; completion will be reported automatically with exit status and output tail. Use bash_output({ bash_id: "${id}" }) only to peek at new output. monitor cannot attach to this session; use it for future event-driven launches. Use kill_bash({ bash_id: "${id}" }) to stop this session.`;
 		return textResult(
 			`Command is still running; auto-detached to background with ID: ${id} (${timeoutNote}).\n\nPartial output:\n${partialOutput}\n\n${guidance}`,
@@ -411,7 +411,7 @@ async function runBackground(
 	const header = `Command running in background with ID: ${id}`;
 	const backendNote =
 		runtime.backend === "pipe-fallback"
-			? "\n(native PTY unavailable — running via pipe fallback; bash_input/bash_resize are limited.)"
+			? "\n(native PTY unavailable: running via pipe fallback; bash_input/bash_resize are limited.)"
 			: "";
 	const earlyBlock = early ? `\n\n${early}` : "";
 	return textResult(`${header}${backendNote}${earlyBlock}`, { details: { bash_id: id, background: true } });
@@ -424,7 +424,7 @@ export function createPtyBashTool(ctx: TerminalToolContext) {
 		exposure: "eval" as const,
 		label: "bash",
 		description:
-			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops — subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
+			"Execute a shell command in a persistent PTY-backed session. Set run_in_background:true for long-lived or interactive sessions; steer them with bash_input, snapshot with bash_output, tear down with kill_bash. To wait on observable state (a build finishing, a server coming up, a log line), never run sleep or poll loops: subscribe with the monitor tool instead. Foreground blocking stops at the ~60s window and a still-running command auto-detaches to a live background session; `timeout` is the process kill deadline in seconds.",
 		promptSnippet: "Run shell commands; run_in_background:true for long-lived/interactive PTY sessions",
 		promptGuidelines: ["You can inspect PI_* environment variables for current model and session details."],
 		parameters: ptyBashSchema,

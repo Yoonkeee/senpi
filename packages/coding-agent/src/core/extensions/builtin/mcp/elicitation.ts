@@ -99,7 +99,7 @@ async function collectForm(
 	const content: Record<string, string | number | boolean> = {};
 	const required = new Set(requestedSchema.required ?? []);
 	for (const [name, property] of Object.entries(requestedSchema.properties ?? {})) {
-		const title = `${message} — ${property.title ?? name}`;
+		const title = `${message} - ${property.title ?? name}`;
 		if (property.type === "boolean") {
 			content[name] = await ui.confirm(title, property.description ?? name);
 			continue;

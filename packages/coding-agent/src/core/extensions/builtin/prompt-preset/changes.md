@@ -1,3 +1,22 @@
+## 2026-10-23 - Record product-copy punctuation (senpi#4040)
+
+### What changed
+
+- `test/suite/prompt-presets-native-baseline.json`: refresh 156 of the 198 native prompt hashes after the product-copy punctuation changes. Every preset, surface and input is rendered against the clean merge base; the word sequence is unchanged.
+- `test/suite/regressions/3483-prompt-goldens.json` and `3483-review-accounting.test.ts`: refresh the newly merged prompt-accounting baselines for the same verification and workstation punctuation rewrites; fixture inputs stay fixed.
+
+### Why
+
+- The native generation contracts compare shipped prompt bytes, so intentional punctuation changes require matching recorded hashes.
+
+### Why an extension could not handle it
+
+- The fixture records the builtin prompt builders before runtime extensions apply.
+
+### Expected merge conflict zones
+
+- The native prompt baseline hash values.
+
 ## 2026-10-18 - Measure the preset actually composed (senpi#3483)
 
 ### What changed

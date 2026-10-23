@@ -1,3 +1,31 @@
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/senpi-codemode/test/gate/baseline.json`: refresh the 240 prompt-copy cells and their byte/token estimates from the real prompt builder; preserve every non-prompt baseline section.
+- `packages/senpi-codemode/test/gate/allowlist.json`: list each intended prompt-cell edit under `senpi#4040` with a punctuation-only reason, as required by the baseline review guard.
+- `packages/senpi-codemode/src/tool/image.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/tool/eval-request.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/prompt/eval-prompt-template.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/bridges/schema-hint.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/kernels/js/display-image.js`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/kernels/js/worker-indirect-eval.js`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/kernels/js/worker-shell-capture.js`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/senpi-codemode/src/kernels/js/worker-webview.js`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 # senpi-codemode fork changes
 
 ## 2026-10-23 - The gate records its baseline on Linux only

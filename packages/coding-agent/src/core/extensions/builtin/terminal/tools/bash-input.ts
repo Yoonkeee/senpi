@@ -30,7 +30,7 @@ export function createBashInputTool(ctx: TerminalToolContext) {
 		name: TERMINAL_INPUT_TOOL,
 		label: "bash_input",
 		description:
-			"Write stdin or named keys (ctrl+c, enter, up, ...) to a live background bash session — e.g. drive a REPL or send SIGINT. This executes arbitrary shell input and is permission-gated like bash.",
+			"Write stdin or named keys (ctrl+c, enter, up, ...) to a live background bash session: e.g. drive a REPL or send SIGINT. This executes arbitrary shell input and is permission-gated like bash.",
 		promptSnippet: "Send stdin/keys to a live background bash session (REPL steering, ctrl+c, etc.)",
 		parameters: bashInputSchema,
 		async execute(_toolCallId: string, input: BashInputInput, _signal?: AbortSignal): Promise<TerminalToolResult> {

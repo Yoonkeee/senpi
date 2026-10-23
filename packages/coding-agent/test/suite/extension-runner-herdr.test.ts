@@ -166,7 +166,7 @@ describe("herdr builtin host integration", () => {
 			expect(f.requests.at(-1)?.params).toMatchObject({
 				source: "custom:senpi",
 				state: "blocked",
-				message: "Auth — Which flow?",
+				message: "Auth - Which flow?",
 			});
 			const settled = once(f.received, "request", { signal: AbortSignal.timeout(5000) });
 			response.resolve({ status: "cancelled", answers: {}, unanswered: ["q1"] });

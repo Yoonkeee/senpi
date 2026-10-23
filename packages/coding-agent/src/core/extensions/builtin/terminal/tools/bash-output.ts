@@ -68,7 +68,7 @@ export function createBashOutputTool(ctx: TerminalToolContext) {
 			if (muted) {
 				mutedNote =
 					mutedDropped > 0
-						? `monitor muted — ${mutedDropped} line(s) dropped while muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`
+						? `monitor muted - ${mutedDropped} line(s) dropped while muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`
 						: `monitor muted; run monitor({ action: "rearm", bash_id: "${input.bash_id}" }) to resume.`;
 			}
 			const extra = monitorEntry ? { details: { monitorMuted: muted, mutedDropped } } : undefined;

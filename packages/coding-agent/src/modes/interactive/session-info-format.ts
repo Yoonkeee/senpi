@@ -6,7 +6,7 @@ const money = new Intl.NumberFormat("en-US", {
 	currency: "USD",
 });
 
-const UNKNOWN = "—";
+const UNKNOWN = "-";
 
 export function formatSessionInfo(stats: SessionStats, sessionName?: string): string {
 	let info = `${theme.bold("Session Info")}\n\n`;

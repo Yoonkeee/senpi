@@ -1,3 +1,23 @@
+## 2026-10-23 - Product copy punctuation (senpi#4040)
+
+### What changed
+
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+- `packages/coding-agent/src/modes/interactive/components/daxnuts.ts`: replace em dashes in copy with ordinary punctuation, or document an intentional non-copy lint exception.
+
+### Why
+
+- The product-copy oxlint rule rejects em dashes in strings, templates and JSX text. Existing copy must pass it without changing control flow or punctuation matching.
+
+### Why an extension could not handle it
+
+- These source strings and lint directives are read before runtime extensions can rewrite them.
+
+### Expected merge conflict zones
+
+- The listed copy strings and adjacent lint comments only.
+
+
 ## 2026-10-21 - A cost total that includes unpriced turns is marked as a lower bound (senpi#3844)
 
 ### What changed

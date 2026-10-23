@@ -192,7 +192,7 @@ class StreamIdleTimeoutError extends Error {
 export class StreamStartTimeoutError extends Error {
 	constructor(timeoutMs: number) {
 		super(
-			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs — retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
+			`Provider stream start timed out after ${timeoutMs}ms (raise streamStartTimeoutMs: retry.provider.streamStartTimeoutMs in senpi settings; 0 disables)`,
 		);
 		this.name = "StreamStartTimeoutError";
 	}

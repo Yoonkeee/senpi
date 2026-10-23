@@ -5877,7 +5877,7 @@ export class InteractiveMode {
 					tone: "warning",
 					why: event.chainConfigured
 						? "Retrying on your configured fallback chain."
-						: "No fallback chain configured — set one with /fallback.",
+						: "No fallback chain configured: set one with /fallback.",
 				});
 				break;
 

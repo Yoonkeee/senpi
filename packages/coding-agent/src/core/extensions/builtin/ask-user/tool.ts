@@ -220,7 +220,7 @@ export function startQuestion(
 	const first = request.questions[0];
 	pi.events.emit("herdr:blocked", {
 		active: true,
-		label: first ? `${first.header} — ${first.question}` : "Question",
+		label: first ? `${first.header} - ${first.question}` : "Question",
 		id: request.requestId,
 	});
 	signal?.addEventListener("abort", abort, { once: true });

@@ -77,7 +77,7 @@ function syncToolset(pi: ExtensionAPI, state: TerminalExtensionState): void {
 	if (stepAside) {
 		for (const companion of TERMINAL_COMPANION_TOOLS) active.add(companion);
 		if (!state.noticeShown) {
-			state.ctx?.ui.notify("native Anthropic bash active — monitor sessions remain available", "info");
+			state.ctx?.ui.notify("native Anthropic bash active: monitor sessions remain available", "info");
 			state.noticeShown = true;
 		}
 	} else {

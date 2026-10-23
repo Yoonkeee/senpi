@@ -35,8 +35,8 @@ describe("herdr lifecycle reporter (senpi#1645)", () => {
 		expect(f.requests[1]?.params).toMatchObject({ agent_session_path: "/sessions/root.jsonl" });
 		f.setIdle(false);
 		await f.emit("agent_start");
-		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth — Which flow?" });
-		expect(f.requests.at(-1)?.params).toMatchObject({ state: "blocked", message: "Auth — Which flow?" });
+		await f.bus("herdr:blocked", { active: true, id: "q1", label: "Auth - Which flow?" });
+		expect(f.requests.at(-1)?.params).toMatchObject({ state: "blocked", message: "Auth - Which flow?" });
 		await f.bus("herdr:blocked", { active: false, id: "q1" });
 		await f.bus("herdr:blocked", { active: false, id: "q1" });
 		f.setIdle(true);

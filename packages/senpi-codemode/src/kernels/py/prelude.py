@@ -162,7 +162,7 @@ def _display_image_dict(value: dict[str, Any]) -> bool:
         return False
     encoded = _image_base64(payload)
     if encoded is None:
-        print(f"[display: image dropped \u2014 `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
+        print(f"[display: image dropped - `data` must be base64, a data: URL, or bytes; got {type(payload).__name__}]")
         return True
     emit({"type": "display", "mimeType": mime_type, "dataBase64": encoded[0]})
     return True

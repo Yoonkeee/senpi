@@ -101,6 +101,7 @@ function createKernelWebView(NativeWebView, requestPort) {
 				const ref = new WeakRef(view);
 				natives.add(ref);
 				onCellRelease(() => ref.deref()?.close());
+				// oxlint-disable-next-line eslint/no-constructor-return -- Worker-safe calls must return the native view instead of the main-thread proxy.
 				return view;
 			}
 			super();
